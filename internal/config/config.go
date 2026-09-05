@@ -13,14 +13,44 @@ type Config struct {
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 	DbConfig     *DbConfig
+	OAuthConfig  *OAuthConfig
+	JWTConfig    *JWTConfig
 }
 
-func NewConfig(port string, readTimeout, writeTimeout time.Duration, dbConfig *DbConfig) *Config {
+func NewConfig(port string, readTimeout, writeTimeout time.Duration, dbConfig *DbConfig, oauthConfig *OAuthConfig, jwtConfig *JWTConfig) *Config {
 	return &Config{
 		Port:         port,
 		ReadTimeout:  readTimeout,
 		WriteTimeout: writeTimeout,
 		DbConfig:     dbConfig,
+		OAuthConfig:  oauthConfig,
+		JWTConfig:    jwtConfig,
+	}
+}
+
+type OAuthConfig struct {
+	GoogleClientID     string
+	GoogleClientSecret string
+	GoogleRedirectURL  string
+}
+
+func NewOAuthConfig(googleClientID, googleClientSecret, googleRedirectURL string) *OAuthConfig {
+	return &OAuthConfig{
+		GoogleClientID:     googleClientID,
+		GoogleClientSecret: googleClientSecret,
+		GoogleRedirectURL:  googleRedirectURL,
+	}
+}
+
+type JWTConfig struct {
+	Secret string
+	Expiry time.Duration
+}
+
+func NewJWTConfig(secret string, expiry time.Duration) *JWTConfig {
+	return &JWTConfig{
+		Secret: secret,
+		Expiry: expiry,
 	}
 }
 
@@ -48,9 +78,21 @@ func LoadConfig() (*Config, error) {
 
 	port := os.Getenv("PORT")
 	databaseUrl := os.Getenv("DATABASE_URL")
+	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
+	googleClientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+	googleRedirectURL := os.Getenv("GOOGLE_REDIRECT_URL")
+	jwtSecret := os.Getenv("JWT_SECRET")
 
 	if port == "" || databaseUrl == "" {
 		return nil, errors.New("$PORT or $DATABASE_URL is not set")
+	}
+
+	if googleClientID == "" || googleClientSecret == "" || googleRedirectURL == "" {
+		return nil, errors.New("$GOOGLE_CLIENT_ID or $GOOGLE_CLIENT_SECRET or $GOOGLE_REDIRECT_URL is not set")
+	}
+
+	if jwtSecret == "" {
+		return nil, errors.New("$JWT_SECRET is not set")
 	}
 
 	readTimeout := 15 * time.Second
@@ -59,7 +101,10 @@ func LoadConfig() (*Config, error) {
 	maxIdleConns := 10
 	maxConnLifetime := 5 * time.Minute
 	maxConnIdleTime := 30 * time.Minute
+	jwtExpiry := 24 * time.Hour
 
 	dbConfig := NewDbConfig(databaseUrl, maxOpenConns, maxIdleConns, maxConnLifetime, maxConnIdleTime)
-	return NewConfig(port, readTimeout, writeTimeout, dbConfig), nil
+	oauthConfig := NewOAuthConfig(googleClientID, googleClientSecret, googleRedirectURL)
+	jwtConfig := NewJWTConfig(jwtSecret, jwtExpiry)
+	return NewConfig(port, readTimeout, writeTimeout, dbConfig, oauthConfig, jwtConfig), nil
 }
