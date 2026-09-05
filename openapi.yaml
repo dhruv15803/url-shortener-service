@@ -1,0 +1,558 @@
+openapi: 3.1.0
+
+info:
+  title: URL Shortener Service API
+  version: 1.0.0
+  description: |
+    A URL shortener with campaign management and click analytics.
+
+    **Authentication** is Google OAuth only. Signing in sets an httpOnly `session`
+    cookie holding a JWT; every `/api/urls` endpoint requires it.
+
+    **Status is derived, not stored.** The `status` field in responses is computed
+    on every read from the campaign's `starts_at`/`expires_at` and whether the user
+    has disabled it. Only `ACTIVE` and `DISABLED` may be *sent* — `scheduled` and
+    `expired` are outputs, never inputs. See the `Campaign` schema.
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: Auth
+    description: Google OAuth sign-in and session issuance
+  - name: Campaigns
+    description: Destination URLs and their short-link campaigns
+  - name: Redirect
+    description: Public short-link resolution
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: session
+      description: JWT session cookie set by `GET /api/auth/callback`. Expires after 24h.
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable failure reason.
+      examples:
+        - error: short url not found
+
+    ShortURLStatus:
+      type: string
+      description: |
+        Effective campaign status, computed per request:
+
+        | Value | Meaning |
+        |---|---|
+        | `disabled` | The user paused it. Always wins over the schedule. |
+        | `scheduled` | `starts_at` is in the future. |
+        | `expired` | `expires_at` is in the past. |
+        | `active` | Redirecting right now. |
+
+        Only `ACTIVE` and `DISABLED` are accepted as *input* on update.
+      enum: [active, scheduled, expired, disabled]
+
+    Campaign:
+      type: object
+      description: A short link and the destination it points at.
+      required: [id, code, short_url, campaign_name, status, destination_url, starts_at, expires_at, created_at]
+      properties:
+        id:
+          type: integer
+          examples: [9]
+        code:
+          type: string
+          description: The short code appearing in the short link.
+          examples: [OQ]
+        short_url:
+          type: string
+          format: uri
+          examples: ["http://localhost:8080/OQ"]
+        campaign_name:
+          type: [string, "null"]
+          maxLength: 255
+          examples: ["instagram launch"]
+        status:
+          $ref: '#/components/schemas/ShortURLStatus'
+        destination_url:
+          type: string
+          description: Where visitors are sent.
+          examples: ["https://example.com/product/123"]
+        starts_at:
+          type: [string, "null"]
+          format: date-time
+          description: Before this instant the campaign reports `scheduled` and will not redirect.
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+          description: After this instant the campaign reports `expired` and will not redirect.
+        created_at:
+          type: string
+          format: date-time
+
+    DestinationRef:
+      type: object
+      required: [id, url]
+      properties:
+        id:
+          type: integer
+          examples: [5]
+        url:
+          type: string
+          examples: ["https://example.com/product/123"]
+
+    ShortURLRef:
+      type: object
+      description: Compact short-link shape returned by the creation endpoints.
+      required: [id, code, url, status]
+      properties:
+        id:
+          type: integer
+        code:
+          type: string
+        url:
+          type: string
+          format: uri
+        campaign_name:
+          type: [string, "null"]
+        status:
+          $ref: '#/components/schemas/ShortURLStatus'
+
+    CreateDestinationRequest:
+      type: object
+      required: [destination_url]
+      properties:
+        destination_url:
+          type: string
+          minLength: 1
+          description: The long URL to shorten.
+        campaign_name:
+          type: [string, "null"]
+          maxLength: 255
+        starts_at:
+          type: [string, "null"]
+          format: date-time
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+      examples:
+        - destination_url: "https://example.com/product/123"
+          campaign_name: "instagram launch"
+
+    CreateShortURLRequest:
+      type: object
+      description: Adds another campaign to a destination that already exists.
+      properties:
+        campaign_name:
+          type: [string, "null"]
+          maxLength: 255
+        starts_at:
+          type: [string, "null"]
+          format: date-time
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+      examples:
+        - campaign_name: "email campaign"
+          expires_at: "2027-01-01T00:00:00Z"
+
+    UpdateCampaignRequest:
+      type: object
+      description: |
+        A partial update. **Omitting a key leaves it unchanged; sending `null`
+        clears it.** `{}` is a valid no-op.
+      properties:
+        name:
+          type: [string, "null"]
+          maxLength: 255
+          description: Send `null` to remove the campaign name.
+        status:
+          type: string
+          enum: [ACTIVE, DISABLED]
+          description: |
+            Case-insensitive. Sending `SCHEDULED` or `EXPIRED` returns 400 —
+            those are derived from the dates, not settable.
+        starts_at:
+          type: [string, "null"]
+          format: date-time
+          description: Send `null` to start immediately.
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+          description: Send `null` to make the campaign never expire.
+      examples:
+        - name: "renamed campaign"
+          status: DISABLED
+        - expires_at: null
+
+    CampaignListResponse:
+      type: object
+      required: [campaigns, total, limit, offset]
+      properties:
+        campaigns:
+          type: array
+          items:
+            $ref: '#/components/schemas/Campaign'
+        total:
+          type: integer
+          description: Total campaigns owned by the user, ignoring pagination.
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+  responses:
+    Unauthorized:
+      description: Missing, expired or invalid session cookie.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: unauthorized
+    NotFound:
+      description: |
+        No such short code, **or** it belongs to another user. The two are
+        deliberately indistinguishable so campaign ownership isn't leaked.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: short url not found
+    BadRequest:
+      description: Malformed body or a patch that would leave the campaign invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: expires_at must be after starts_at
+
+paths:
+  /api/health:
+    get:
+      tags: [Auth]
+      summary: Liveness check
+      security: []
+      responses:
+        '200':
+          description: Service is up.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["hello world"]
+
+  /api/auth/google/login:
+    get:
+      tags: [Auth]
+      summary: Begin Google sign-in
+      security: []
+      description: |
+        Sets a short-lived `oauth_state` cookie (CSRF protection) and redirects to
+        Google's consent screen. Open this in a **browser** — it cannot be completed
+        from an API client.
+      responses:
+        '307':
+          description: Redirect to Google's consent screen.
+          headers:
+            Location:
+              schema:
+                type: string
+            Set-Cookie:
+              schema:
+                type: string
+                examples: ["oauth_state=...; HttpOnly; SameSite=Lax"]
+        '500':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/auth/callback:
+    get:
+      tags: [Auth]
+      summary: Google OAuth callback
+      security: []
+      description: |
+        Google redirects here with `code` and `state`. On success the user is
+        created or refreshed and a `session` JWT cookie is set (24h).
+
+        This URI must exactly match the one registered on the Google OAuth client.
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          description: Must match the `oauth_state` cookie.
+          schema:
+            type: string
+        - name: error
+          in: query
+          description: Present when the user declines consent.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Signed in. The JWT is in the `Set-Cookie` header, not the body.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                examples: ["session=<jwt>; HttpOnly; SameSite=Lax"]
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    type: object
+                    properties:
+                      id: { type: integer }
+                      email: { type: string, format: email }
+                      username: { type: string }
+                      image_url: { type: [string, "null"] }
+                      is_verified: { type: boolean }
+        '400':
+          description: Consent denied, missing code, or `state` mismatch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/urls:
+    get:
+      tags: [Campaigns]
+      summary: List the authenticated user's campaigns
+      description: Newest first. `status` on each row is derived at request time.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+            minimum: 1
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+      responses:
+        '200':
+          description: The user's campaigns.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Campaigns]
+      summary: Shorten a URL (find-or-create the destination)
+      description: |
+        Two outcomes:
+
+        - **201** — the destination is new for this user, so it is created along
+          with a first campaign, returned as `short_url`.
+        - **200** — the user already has this destination, so nothing is created
+          and its existing campaigns are returned as `short_urls`. Any
+          `campaign_name`/`starts_at`/`expires_at` sent are ignored in this case;
+          use `POST /api/destinations/{destinationId}/short-urls` to add another campaign.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDestinationRequest'
+      responses:
+        '201':
+          description: Destination created with its first campaign.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [destination_url, short_url]
+                properties:
+                  destination_url:
+                    $ref: '#/components/schemas/DestinationRef'
+                  short_url:
+                    $ref: '#/components/schemas/ShortURLRef'
+        '200':
+          description: Destination already existed; its campaigns are returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [destination_url, short_urls]
+                properties:
+                  destination_url:
+                    $ref: '#/components/schemas/DestinationRef'
+                  short_urls:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ShortURLRef'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/urls/{shortCode}:
+    parameters:
+      - name: shortCode
+        in: path
+        required: true
+        schema:
+          type: string
+        examples:
+          simple:
+            value: OQ
+    get:
+      tags: [Campaigns]
+      summary: Fetch a single campaign
+      responses:
+        '200':
+          description: The campaign.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [campaign]
+                properties:
+                  campaign:
+                    $ref: '#/components/schemas/Campaign'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [Campaigns]
+      summary: Update a campaign
+      description: |
+        Partial update of `name`, `status`, `starts_at`, `expires_at`.
+
+        Validation runs against the **resulting** state, so a single request may
+        both re-enable a campaign and extend its `expires_at`. Enabling a campaign
+        whose `expires_at` is already past succeeds but reports `expired`.
+
+        A successful update refreshes the redirect cache immediately, so disabling
+        a campaign stops it redirecting at once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCampaignRequest'
+      responses:
+        '200':
+          description: The updated campaign.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [campaign]
+                properties:
+                  campaign:
+                    $ref: '#/components/schemas/Campaign'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/destinations/{destinationId}/short-urls:
+    post:
+      tags: [Campaigns]
+      summary: Add another campaign to an existing destination
+      description: |
+        Lets one destination carry several short links — e.g. one per marketing
+        channel — each with its own code, name and schedule.
+
+        Keyed by **destination id**. Campaign endpoints live under `/api/urls`
+        and are keyed by short code, so the two identifier types stay separate.
+      parameters:
+        - name: destinationId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateShortURLRequest'
+      responses:
+        '201':
+          description: The new campaign.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [short_url]
+                properties:
+                  short_url:
+                    $ref: '#/components/schemas/ShortURLRef'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: No such destination, or it belongs to another user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /{shortCode}:
+    get:
+      tags: [Redirect]
+      summary: Resolve a short link
+      security: []
+      description: |
+        Public, unauthenticated. Served from a Redis cache without touching the
+        database on a hit. Records a click event asynchronously — analytics never
+        delay or break the redirect.
+
+        Returns **302** (not 301) deliberately: a cached permanent redirect would
+        stop repeat clicks reaching the server, losing analytics.
+      parameters:
+        - name: shortCode
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-Forwarded-For
+          in: header
+          required: false
+          description: First entry is used as the client IP for geo lookup when present.
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to the destination URL.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+        '404':
+          description: |
+            Unknown code, or the campaign is `disabled`, `scheduled` or `expired`.
+            Indistinguishable by design.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'

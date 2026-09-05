@@ -1,0 +1,229 @@
+# URL Shortener API
+
+Companion guide to [`openapi.yaml`](../openapi.yaml), which is the machine-readable source of truth.
+
+Base URL (local): `http://localhost:8080`
+
+---
+
+## Contents
+
+- [Quick start](#quick-start)
+- [Authentication](#authentication)
+- [How status works](#how-status-works) ← read this before building campaign UI
+- [Endpoints](#endpoints)
+- [Errors](#errors)
+- [Generating TypeScript types](#generating-typescript-types)
+- [Running the stack](#running-the-stack)
+
+---
+
+## Quick start
+
+```bash
+# 1. sign in via a browser (see Authentication), then copy the session cookie
+export SESSION="<jwt from the session cookie>"
+
+# 2. shorten a url
+curl -X POST http://localhost:8080/api/urls \
+  -H "Content-Type: application/json" -b "session=$SESSION" \
+  -d '{"destination_url":"https://example.com/product/123","campaign_name":"instagram launch"}'
+
+# 3. follow the short link
+curl -i http://localhost:8080/OQ        # -> 302 Location: https://example.com/product/123
+
+# 4. list your campaigns
+curl -b "session=$SESSION" http://localhost:8080/api/urls
+```
+
+---
+
+## Authentication
+
+Google OAuth is the only sign-in method. There is no password login or registration endpoint.
+
+**The flow**
+
+1. Browser hits `GET /api/auth/google/login`. The server sets a 10-minute `oauth_state` cookie (CSRF protection) and 307s to Google.
+2. The user consents. Google redirects to `GET /api/auth/callback?code=…&state=…`.
+3. The server verifies `state` against the cookie, exchanges the code, fetches the Google profile, creates or refreshes the user, and sets a **`session`** cookie containing a JWT valid for **24 hours**.
+4. Every `/api/urls` request must carry that cookie.
+
+**The JWT is only in the `Set-Cookie` header** — the callback's JSON body contains the user, not the token.
+
+### Getting a token for Postman / curl
+
+The consent screen is interactive, so the flow cannot be completed from an API client. Do it once in a browser, then reuse the cookie:
+
+1. Open `http://localhost:8080/api/auth/google/login` and sign in.
+2. DevTools → **Application** → Cookies → `http://localhost:8080` → copy the `session` value.
+   (Or DevTools → **Network** → the `callback` request → Response Headers → `Set-Cookie`.)
+3. Send it as a header: `Cookie: session=<jwt>`, or add it to Postman's cookie jar for domain `localhost`.
+
+Repeat daily, since the token expires after 24h. Replaying `/api/auth/callback` with a copied `code` will **not** work — the `oauth_state` cookie won't match and Google's code is single-use.
+
+---
+
+## How status works
+
+**This is the detail most likely to trip up a frontend.**
+
+`status` is **computed on every read** — it is not a field you set, except for pausing. The server derives it from the campaign's dates and whether the user disabled it:
+
+| Returned `status` | When |
+|---|---|
+| `disabled` | The user paused it. **Always wins**, regardless of dates. |
+| `scheduled` | `starts_at` is in the future. |
+| `expired` | `expires_at` is in the past. |
+| `active` | None of the above — it redirects right now. |
+
+Only `active` campaigns redirect; the other three return 404 from `GET /{shortCode}`.
+
+### What you may send
+
+`PUT` accepts **`ACTIVE`** or **`DISABLED`** only (case-insensitive). These express intent: *enabled* or *paused*.
+
+```jsonc
+{"status": "DISABLED"}   // ok — pause it
+{"status": "active"}     // ok — un-pause it
+{"status": "SCHEDULED"}  // 400 — derived from starts_at, not settable
+{"status": "EXPIRED"}    // 400 — derived from expires_at, not settable
+```
+
+To make a campaign *scheduled*, set a future `starts_at`. To *expire* it, set a past `expires_at`. To pause it regardless of dates, disable it.
+
+### Enabling something expired
+
+Allowed, and it simply reads back as `expired` — so you can enable and extend in one request:
+
+```bash
+# enable alone -> 200, but status is still "expired" and it won't redirect
+curl -X PUT .../api/urls/OQ -d '{"status":"ACTIVE"}'
+
+# enable AND extend -> status becomes "active" and it redirects
+curl -X PUT .../api/urls/OQ -d '{"status":"ACTIVE","expires_at":"2027-01-01T00:00:00Z"}'
+```
+
+Validation applies to the **resulting** state, which is what makes the combined request work.
+
+---
+
+## Endpoints
+
+All `/api/urls*` endpoints require the `session` cookie. `GET /{shortCode}` and the auth routes are public.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/health` | Liveness check |
+| `GET` | `/api/auth/google/login` | Start Google sign-in (browser only) |
+| `GET` | `/api/auth/callback` | OAuth callback; sets the `session` cookie |
+| `GET` | `/api/urls` | List your campaigns (`?limit=&offset=`) |
+| `POST` | `/api/urls` | Shorten a URL (find-or-create the destination) |
+| `GET` | `/api/urls/{shortCode}` | Fetch one campaign |
+| `PUT` | `/api/urls/{shortCode}` | Update name / status / schedule |
+| `POST` | `/api/destinations/{destinationId}/short-urls` | Add another campaign to a destination |
+| `GET` | `/{shortCode}` | Public redirect (302) + click tracking |
+
+### `POST /api/urls` — two outcomes
+
+This endpoint is find-or-create, so **check the status code**:
+
+- **201** — the destination was new. Response has a single `short_url`.
+- **200** — you already had this destination. Response has an array of its existing `short_urls`, and nothing was created. Any `campaign_name`/`starts_at`/`expires_at` you sent are **ignored**; to add another campaign use `POST /api/destinations/{destinationId}/short-urls`.
+
+```jsonc
+// 201
+{ "destination_url": { "id": 5, "url": "https://example.com/product/123" },
+  "short_url": { "id": 9, "code": "OQ", "url": "http://localhost:8080/OQ",
+                 "campaign_name": "instagram launch", "status": "active" } }
+
+// 200
+{ "destination_url": { "id": 5, "url": "https://example.com/product/123" },
+  "short_urls": [ { "id": 9, "code": "OQ", "url": "http://localhost:8080/OQ",
+                    "campaign_name": "instagram launch", "status": "active" } ] }
+```
+
+### `GET /api/urls` — campaign list
+
+Flat rows, newest first, with the destination embedded — maps straight onto a table.
+
+```jsonc
+{
+  "campaigns": [
+    { "id": 9, "code": "OQ", "short_url": "http://localhost:8080/OQ",
+      "campaign_name": "instagram launch", "status": "active",
+      "destination_url": "https://example.com/product/123",
+      "starts_at": null, "expires_at": null,
+      "created_at": "2026-09-06T02:33:48.043988+05:30" }
+  ],
+  "total": 11, "limit": 50, "offset": 0
+}
+```
+
+`limit` defaults to 50 and caps at 100; `total` ignores pagination. Invalid values fall back to defaults rather than erroring.
+
+### `PUT /api/urls/{shortCode}` — partial update
+
+**Omitting a key leaves it unchanged. Sending `null` clears it.** That distinction is the whole point of the endpoint:
+
+```jsonc
+{"name": "renamed"}          // only the name changes
+{"expires_at": null}         // campaign never expires  (and may flip expired -> active)
+{"starts_at": null}          // starts immediately      (scheduled -> active)
+{"name": null}               // clear the campaign name
+{}                           // valid no-op, returns 200
+```
+
+A successful update **refreshes the redirect cache immediately** — disabling a campaign stops it redirecting on the very next request, not when a cache entry happens to expire.
+
+Returns the full campaign under a `campaign` key, same shape as the list rows.
+
+### `GET /{shortCode}` — the public redirect
+
+- **302**, never 301 — deliberate, so repeat clicks keep reaching the server for analytics.
+- Served from cache without a database read on a hit.
+- Records the click asynchronously (user agent → browser/OS/device, IP → country/city/region). Analytics never delay or break the redirect.
+- **404** for unknown codes *and* for `disabled`/`scheduled`/`expired` campaigns — indistinguishable by design.
+
+---
+
+## Errors
+
+Every error is the same envelope:
+
+```json
+{ "error": "short url not found" }
+```
+
+| Status | Meaning | Common causes |
+|---|---|---|
+| `400` | Bad request | Malformed JSON; `status` not ACTIVE/DISABLED; `expires_at` not after `starts_at`; name over 255 chars; missing `destination_url` |
+| `401` | Unauthorized | Missing, malformed or expired `session` cookie |
+| `404` | Not found | Unknown short code, **or** it belongs to another user, **or** the campaign isn't currently redirecting |
+| `500` | Server error | Database failure |
+
+**On 404 and ownership:** "doesn't exist" and "belongs to someone else" return identical responses on purpose, so campaign ownership can't be probed.
+
+---
+
+## Generating TypeScript types
+
+```bash
+npx openapi-typescript openapi.yaml -o src/api-types.ts
+```
+
+Regenerate whenever `openapi.yaml` changes so the frontend can't silently drift from the backend.
+
+---
+
+## Running the stack
+
+Three processes:
+
+```bash
+docker start url-shortener-redis   # cache + click queue
+make run                           # api      (:8080)
+make worker                        # click worker — writes clicks to postgres
+```
+
+The API still serves redirects if Redis or the worker is down; it falls back to Postgres and drops click events with a logged error. Migrations: `make migrate-up`.

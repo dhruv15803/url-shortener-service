@@ -3,13 +3,18 @@ package main
 import (
 	"log"
 	"net/http"
+	"time"
 
+	"github.com/dhruv15803/url-shortener-service/internal/cache"
 	"github.com/dhruv15803/url-shortener-service/internal/config"
 	"github.com/dhruv15803/url-shortener-service/internal/database"
+	"github.com/dhruv15803/url-shortener-service/internal/geoip"
 	"github.com/dhruv15803/url-shortener-service/internal/handlers"
+	"github.com/dhruv15803/url-shortener-service/internal/queue"
 	"github.com/dhruv15803/url-shortener-service/internal/repositories"
 	"github.com/dhruv15803/url-shortener-service/internal/services"
 	"github.com/go-chi/chi/v5"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -24,8 +29,40 @@ func main() {
 		log.Fatalf("connection to database failed: %v\n", err)
 	}
 
+	log.Printf("connected to db!\n")
+
+	geoipReader, err := geoip.NewReader(cfg.GeoIPDBPath)
+	if err != nil {
+		log.Fatalf("failed to open geoip database at %v: %v\n", cfg.GeoIPDBPath, err)
+	}
+	defer geoipReader.Close()
+
+	if geoipReader.Enabled() {
+		log.Printf("geoip enabled: %v\n", cfg.GeoIPDBPath)
+	} else {
+		log.Printf("geoip disabled ($GEOIP_DB_PATH not set), clicks will have no location data\n")
+	}
+
+	// Short timeouts and no retries: redis is on the redirect hot path, so an
+	// unreachable redis must fail fast and let the request fall through to
+	// postgres. The client defaults (5s dial, 3 retries) would otherwise turn
+	// a redis outage into multi-second redirects.
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:         cfg.RedisConfig.Addr,
+		Password:     cfg.RedisConfig.Password,
+		DB:           cfg.RedisConfig.DB,
+		DialTimeout:  200 * time.Millisecond,
+		ReadTimeout:  200 * time.Millisecond,
+		WriteTimeout: 200 * time.Millisecond,
+		MaxRetries:   -1,
+	})
+	defer redisClient.Close()
+
+	clickQueue := queue.NewClickQueue(redisClient)
+	shortURLCache := cache.NewShortURLCache(redisClient)
+
 	repository := repositories.NewRepository(db)
-	service := services.NewService(repository, cfg)
+	service := services.NewService(repository, cfg, clickQueue, geoipReader, shortURLCache)
 	handler := handlers.NewHandler(service, cfg)
 
 	r := chi.NewRouter()
@@ -39,6 +76,9 @@ func main() {
 
 		handler.RegisterRoutes(r)
 	})
+
+	// Registered after /api so GET /{shortCode} can't shadow the api routes.
+	handler.RegisterRootRoutes(r)
 
 	server := http.Server{
 		Addr:         ":" + cfg.Port,

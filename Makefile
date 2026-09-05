@@ -1,11 +1,15 @@
 DATABASE_URL := postgresql://postgres:1234%40%23A@localhost:5432/url-shortener-db?sslmode=disable
 MIGRATIONS_DIR := ./internal/database/migrations
 
-.PHONY: run migrate-create migrate-up migrate-down
+.PHONY: run worker migrate-create migrate-up migrate-down
 
 # Start API server
 run:
 	go run ./cmd/api
+
+# Start the background click worker (consumes the redis queue)
+worker:
+	go run ./cmd/worker
 
 # Create a new migration
 # Usage: make migrate-create name=create_users_table

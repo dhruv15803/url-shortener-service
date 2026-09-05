@@ -11,6 +11,7 @@ type Repository struct {
 	Users           IUserRepository
 	DestinationURLs IDestinationURLRepository
 	ShortURLs       IShortURLRepository
+	Clicks          IClickRepository
 }
 
 func NewRepository(db *sqlx.DB) *Repository {
@@ -18,6 +19,7 @@ func NewRepository(db *sqlx.DB) *Repository {
 		Users:           NewUserRepository(db),
 		DestinationURLs: NewDestinationURLRepository(db),
 		ShortURLs:       NewShortURLRepository(db),
+		Clicks:          NewClickRepository(db),
 	}
 }
 
@@ -33,6 +35,14 @@ type IDestinationURLRepository interface {
 }
 
 type IShortURLRepository interface {
+	GetByShortCode(shortCode string) (*models.ShortURL, error)
 	GetByDestinationID(destinationID int) ([]*models.ShortURL, error)
+	ListByUserID(userID int, limit int, offset int) ([]*ShortURLWithDestination, error)
+	CountByUserID(userID int) (int, error)
 	Create(destinationID int, name *string, status models.ShortURLStatus, startsAt *time.Time, expiresAt *time.Time) (*models.ShortURL, error)
+	Update(id int, name *string, status models.ShortURLStatus, startsAt *time.Time, expiresAt *time.Time) (*models.ShortURL, error)
+}
+
+type IClickRepository interface {
+	Create(event models.ClickEvent) error
 }

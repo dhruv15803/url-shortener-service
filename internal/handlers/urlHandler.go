@@ -11,8 +11,14 @@ import (
 	"github.com/dhruv15803/url-shortener-service/internal/httpresponse"
 	"github.com/dhruv15803/url-shortener-service/internal/middleware"
 	"github.com/dhruv15803/url-shortener-service/internal/models"
+	"github.com/dhruv15803/url-shortener-service/internal/optional"
 	"github.com/dhruv15803/url-shortener-service/internal/services"
 	"github.com/go-chi/chi/v5"
+)
+
+const (
+	defaultCampaignLimit = 50
+	maxCampaignLimit     = 100
 )
 
 type createDestinationRequest struct {
@@ -41,6 +47,27 @@ type shortURLResponse struct {
 	Status       string  `json:"status"`
 }
 
+type updateCampaignRequest struct {
+	Name      optional.Optional[string]    `json:"name"`
+	Status    optional.Optional[string]    `json:"status"`
+	StartsAt  optional.Optional[time.Time] `json:"starts_at"`
+	ExpiresAt optional.Optional[time.Time] `json:"expires_at"`
+}
+
+// campaignResponse is the shape every campaign-facing endpoint returns, so the
+// frontend deals with one consistent object. Status here is always derived.
+type campaignResponse struct {
+	ID             int        `json:"id"`
+	Code           string     `json:"code"`
+	ShortURL       string     `json:"short_url"`
+	CampaignName   *string    `json:"campaign_name"`
+	Status         string     `json:"status"`
+	DestinationURL string     `json:"destination_url"`
+	StartsAt       *time.Time `json:"starts_at"`
+	ExpiresAt      *time.Time `json:"expires_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+}
+
 type UrlHandler struct {
 	service         *services.Service
 	jwtSecret       string
@@ -55,14 +82,25 @@ func NewUrlHandler(service *services.Service, jwtSecret string, shortURLBaseURL 
 	}
 }
 
-// RegisterRoutes mounts the url routes on their own sub-router so the auth
+// RegisterRoutes mounts the url routes on their own sub-routers so the auth
 // middleware applies to them only, and not to the routes other handlers
 // register on the shared /api router.
+//
+// /urls is keyed by short code and /destinations by destination id, so the two
+// identifier types never share a path position.
 func (h *UrlHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/urls", func(r chi.Router) {
 		r.Use(middleware.Auth(h.jwtSecret))
 
+		r.Get("/", h.ListCampaigns)
 		r.Post("/", h.CreateOrGetDestination)
+		r.Get("/{shortCode}", h.GetCampaign)
+		r.Put("/{shortCode}", h.UpdateCampaign)
+	})
+
+	r.Route("/destinations", func(r chi.Router) {
+		r.Use(middleware.Auth(h.jwtSecret))
+
 		r.Post("/{destinationId}/short-urls", h.CreateShortURLForDestination)
 	})
 }
@@ -86,7 +124,7 @@ func (h *UrlHandler) CreateOrGetDestination(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	result, err := h.service.Urls.FindOrCreateDestination(userID, services.CreateDestinationInput{
+	result, err := h.service.Urls.FindOrCreateDestination(r.Context(), userID, services.CreateDestinationInput{
 		DestinationURL: destinationURL,
 		CampaignName:   req.CampaignName,
 		StartsAt:       req.StartsAt,
@@ -140,7 +178,7 @@ func (h *UrlHandler) CreateShortURLForDestination(w http.ResponseWriter, r *http
 		return
 	}
 
-	shortURL, err := h.service.Urls.CreateShortURLForDestination(userID, destinationID, services.CreateShortURLInput{
+	shortURL, err := h.service.Urls.CreateShortURLForDestination(r.Context(), userID, destinationID, services.CreateShortURLInput{
 		CampaignName: req.CampaignName,
 		StartsAt:     req.StartsAt,
 		ExpiresAt:    req.ExpiresAt,
@@ -157,6 +195,129 @@ func (h *UrlHandler) CreateShortURLForDestination(w http.ResponseWriter, r *http
 	httpresponse.WriteJSON(w, http.StatusCreated, map[string]any{
 		"short_url": h.toShortURLResponse(shortURL),
 	})
+}
+
+func (h *UrlHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		httpresponse.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	limit := intQueryParam(r, "limit", defaultCampaignLimit)
+	if limit < 1 {
+		limit = defaultCampaignLimit
+	}
+	if limit > maxCampaignLimit {
+		limit = maxCampaignLimit
+	}
+
+	offset := intQueryParam(r, "offset", 0)
+	if offset < 0 {
+		offset = 0
+	}
+
+	campaigns, total, err := h.service.Urls.ListCampaigns(userID, limit, offset)
+	if err != nil {
+		httpresponse.WriteError(w, http.StatusInternalServerError, "failed to list campaigns")
+		return
+	}
+
+	responses := make([]campaignResponse, 0, len(campaigns))
+	for _, campaign := range campaigns {
+		responses = append(responses, h.toCampaignResponse(campaign))
+	}
+
+	httpresponse.WriteJSON(w, http.StatusOK, map[string]any{
+		"campaigns": responses,
+		"total":     total,
+		"limit":     limit,
+		"offset":    offset,
+	})
+}
+
+func (h *UrlHandler) GetCampaign(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		httpresponse.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	campaign, err := h.service.Urls.GetCampaign(userID, chi.URLParam(r, "shortCode"))
+	if errors.Is(err, services.ErrShortURLNotFound) {
+		httpresponse.WriteError(w, http.StatusNotFound, "short url not found")
+		return
+	}
+	if err != nil {
+		httpresponse.WriteError(w, http.StatusInternalServerError, "failed to fetch campaign")
+		return
+	}
+
+	httpresponse.WriteJSON(w, http.StatusOK, map[string]any{"campaign": h.toCampaignResponse(campaign)})
+}
+
+func (h *UrlHandler) UpdateCampaign(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		httpresponse.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var req updateCampaignRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpresponse.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	campaign, err := h.service.Urls.UpdateShortURL(r.Context(), userID, chi.URLParam(r, "shortCode"), services.UpdateShortURLInput{
+		Name:      req.Name,
+		Status:    req.Status,
+		StartsAt:  req.StartsAt,
+		ExpiresAt: req.ExpiresAt,
+	})
+
+	var invalid *services.ErrInvalidUpdate
+	switch {
+	case errors.Is(err, services.ErrShortURLNotFound):
+		httpresponse.WriteError(w, http.StatusNotFound, "short url not found")
+		return
+	case errors.As(err, &invalid):
+		httpresponse.WriteError(w, http.StatusBadRequest, invalid.Message)
+		return
+	case err != nil:
+		httpresponse.WriteError(w, http.StatusInternalServerError, "failed to update campaign")
+		return
+	}
+
+	httpresponse.WriteJSON(w, http.StatusOK, map[string]any{"campaign": h.toCampaignResponse(campaign)})
+}
+
+func (h *UrlHandler) toCampaignResponse(campaign *services.CampaignView) campaignResponse {
+	return campaignResponse{
+		ID:             campaign.ShortURL.ID,
+		Code:           campaign.ShortURL.ShortCode,
+		ShortURL:       h.shortURLBaseURL + "/" + campaign.ShortURL.ShortCode,
+		CampaignName:   campaign.ShortURL.Name,
+		Status:         string(campaign.Status),
+		DestinationURL: campaign.DestinationURL,
+		StartsAt:       campaign.ShortURL.StartsAt,
+		ExpiresAt:      campaign.ShortURL.ExpiresAt,
+		CreatedAt:      campaign.ShortURL.CreatedAt,
+	}
+}
+
+func intQueryParam(r *http.Request, name string, fallback int) int {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return fallback
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+
+	return value
 }
 
 func (h *UrlHandler) toShortURLResponse(shortURL *models.ShortURL) shortURLResponse {
