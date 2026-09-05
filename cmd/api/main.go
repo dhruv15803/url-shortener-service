@@ -26,7 +26,7 @@ func main() {
 
 	repository := repositories.NewRepository(db)
 	service := services.NewService(repository, cfg)
-	handler := handlers.NewHandler(service)
+	handler := handlers.NewHandler(service, cfg)
 
 	r := chi.NewRouter()
 

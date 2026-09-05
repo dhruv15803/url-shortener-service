@@ -5,13 +5,13 @@ import (
 	"time"
 
 	"github.com/dhruv15803/url-shortener-service/internal/httpresponse"
+	"github.com/dhruv15803/url-shortener-service/internal/middleware"
 	"github.com/dhruv15803/url-shortener-service/internal/services"
 	"github.com/go-chi/chi/v5"
 )
 
 const (
 	oauthStateCookieName = "oauth_state"
-	sessionCookieName    = "session"
 	oauthStateTTL        = 10 * time.Minute
 	sessionTTL           = 24 * time.Hour
 )
@@ -86,7 +86,7 @@ func (h *AuthHandler) GoogleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
+		Name:     middleware.SessionCookieName,
 		Value:    jwtToken,
 		Path:     "/",
 		HttpOnly: true,
