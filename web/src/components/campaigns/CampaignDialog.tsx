@@ -1,4 +1,6 @@
-import { useNavigate, useParams } from "react-router-dom"
+import { Link, useNavigate, useParams } from "react-router-dom"
+import { BarChart3 } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogContent,
@@ -80,6 +82,13 @@ export function CampaignDialog() {
                 <CampaignStatusBadge status={campaign.status} />
               </Field>
             </div>
+
+            <Button asChild variant="outline" className="w-full gap-2">
+              <Link to={`/campaigns/${campaign.code}/analytics`}>
+                <BarChart3 className="size-4" />
+                View analytics
+              </Link>
+            </Button>
 
             <Separator />
 

@@ -23,6 +23,8 @@ tags:
     description: Google OAuth sign-in and session issuance
   - name: Campaigns
     description: Destination URLs and their short-link campaigns
+  - name: Analytics
+    description: Click analytics for a campaign
   - name: Redirect
     description: Public short-link resolution
 
@@ -61,6 +63,62 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    ClickAnalytics:
+      type: object
+      required: [range, total_clicks]
+      properties:
+        range:
+          type: object
+          description: The range actually used, after defaults were applied.
+          required: [start_ts, end_ts]
+          properties:
+            start_ts:
+              type: string
+              format: date-time
+            end_ts:
+              type: string
+              format: date-time
+        total_clicks:
+          type: integer
+          description: Clicks in the range. Percentages are relative to this.
+        group_by:
+          type: string
+          description: Echoed back; present only on a breakdown.
+          enum: [country, city, region, device, browser, os]
+        data:
+          type: array
+          description: Breakdown rows, busiest first. Present only with `group_by`.
+          items:
+            type: object
+            required: [value, clicks, percentage]
+            properties:
+              value:
+                type: string
+                description: |
+                  The dimension value. Clicks with no value for the dimension
+                  are folded into a literal `"unknown"` row rather than dropped
+                  — geo is missing for private IPs and OS for unparseable
+                  user agents, so this bucket is often significant.
+              clicks:
+                type: integer
+              percentage:
+                type: number
+                format: double
+        series:
+          type: array
+          description: |
+            Clicks per time bucket, oldest first. Present only on the overview.
+            Hourly for ranges up to 2 days, daily beyond.
+          items:
+            type: object
+            required: [bucket, clicks]
+            properties:
+              bucket:
+                type: string
+                format: date-time
+              clicks:
+                type: integer
 
     Error:
       type: object
@@ -525,6 +583,112 @@ paths:
                     $ref: '#/components/schemas/Campaign'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/urls/{shortCode}/clicks:
+    get:
+      tags: [Analytics]
+      summary: Click analytics for a campaign
+      description: |
+        Two response shapes, selected by whether `group_by` is present:
+
+        - **without `group_by`** — the overview: `total_clicks` plus a bucketed
+          `series` for the trend line.
+        - **with `group_by`** — a breakdown: `total_clicks` plus `data`, the top
+          values for that dimension.
+
+        The series is deliberately only returned for the overview, so switching
+        dimensions doesn't recompute a trend the page already has.
+
+        **Range**: defaults to the last **7 days**; maximum window is **90 days**
+        (a larger request is rejected rather than silently truncated). Bucket
+        granularity follows the window — hourly for ranges of 2 days or less,
+        daily beyond that.
+
+        **Percentages** are relative to `total_clicks`. Rows are capped at
+        `limit`, so the listed rows may legitimately sum to less than 100%.
+      parameters:
+        - name: shortCode
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: group_by
+          in: query
+          required: false
+          description: Omit for the overview.
+          schema:
+            type: string
+            enum: [country, city, region, device, browser, os]
+        - name: start_ts
+          in: query
+          required: false
+          description: RFC3339. Defaults to `end_ts` minus 7 days.
+          schema:
+            type: string
+            format: date-time
+        - name: end_ts
+          in: query
+          required: false
+          description: RFC3339. Defaults to now.
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          required: false
+          description: Max breakdown rows, busiest first. Ignored for the overview.
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+            minimum: 1
+      responses:
+        '200':
+          description: Overview or breakdown, depending on `group_by`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClickAnalytics'
+              examples:
+                overview:
+                  summary: No group_by - totals and trend
+                  value:
+                    range:
+                      start_ts: "2026-08-30T18:59:13Z"
+                      end_ts: "2026-09-06T18:59:13Z"
+                    total_clicks: 35656
+                    series:
+                      - bucket: "2026-08-31T00:00:00Z"
+                        clicks: 5027
+                      - bucket: "2026-09-01T00:00:00Z"
+                        clicks: 5090
+                breakdown:
+                  summary: group_by=country
+                  value:
+                    range:
+                      start_ts: "2026-08-30T18:59:13Z"
+                      end_ts: "2026-09-06T18:59:13Z"
+                    group_by: country
+                    total_clicks: 35655
+                    data:
+                      - value: "IN"
+                        clicks: 6044
+                        percentage: 16.95
+                      - value: "unknown"
+                        clicks: 20
+                        percentage: 0.06
+        '400':
+          description: |
+            Unknown `group_by`, unparseable timestamp, `start_ts` not before
+            `end_ts`, or a window longer than 90 days.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':

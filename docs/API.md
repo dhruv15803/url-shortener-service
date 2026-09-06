@@ -136,6 +136,7 @@ All `/api/urls*` endpoints require the `session` cookie. `GET /{shortCode}` and 
 | `GET` | `/api/urls/{shortCode}` | Fetch one campaign |
 | `PUT` | `/api/urls/{shortCode}` | Update name / status / schedule |
 | `POST` | `/api/destinations/{destinationId}/short-urls` | Add another campaign to a destination |
+| `GET` | `/api/urls/{shortCode}/clicks` | Click analytics for a campaign |
 | `GET` | `/{shortCode}` | Public redirect (302) + click tracking |
 
 ### `POST /api/urls` — two outcomes
@@ -191,6 +192,61 @@ Flat rows, newest first, with the destination embedded — maps straight onto a 
 A successful update **refreshes the redirect cache immediately** — disabling a campaign stops it redirecting on the very next request, not when a cache entry happens to expire.
 
 Returns the full campaign under a `campaign` key, same shape as the list rows.
+
+### `GET /api/urls/{shortCode}/clicks` — analytics
+
+One endpoint, two shapes, chosen by whether `group_by` is present.
+
+**Overview** (no `group_by`) — totals and the trend line:
+
+```jsonc
+{
+  "range": { "start_ts": "2026-08-30T18:59:13Z", "end_ts": "2026-09-06T18:59:13Z" },
+  "total_clicks": 35656,
+  "series": [
+    { "bucket": "2026-08-31T00:00:00Z", "clicks": 5027 },
+    { "bucket": "2026-09-01T00:00:00Z", "clicks": 5090 }
+  ]
+}
+```
+
+**Breakdown** (`?group_by=country`) — one dimension at a time:
+
+```jsonc
+{
+  "range": { "start_ts": "...", "end_ts": "..." },
+  "group_by": "country",
+  "total_clicks": 35655,
+  "data": [
+    { "value": "IN",      "clicks": 6044, "percentage": 16.95 },
+    { "value": "unknown", "clicks":   20, "percentage":  0.06 }
+  ]
+}
+```
+
+`group_by` accepts **`country`, `city`, `region`, `device`, `browser`, `os`**. Anything else is a 400 listing the valid values. (`referrer` is intentionally absent — it stores raw URLs, so it needs host normalisation before grouping is useful.)
+
+**Time range**
+
+| | |
+|---|---|
+| Default | last **7 days** |
+| Maximum | **90 days** — a longer window is a 400, not a silent truncation |
+| Params | `start_ts`, `end_ts` (RFC3339; `end_ts` defaults to now) |
+| Buckets | hourly for ranges ≤ 2 days, daily beyond — keeps the series bounded |
+
+```bash
+curl -b "session=$SESSION" \
+  "http://localhost:8080/api/urls/OQ/clicks?group_by=country&start_ts=2026-08-31T00:00:00Z&end_ts=2026-09-01T00:00:00Z"
+```
+
+**Three things that will otherwise surprise you**
+
+1. **The `"unknown"` bucket is real data, not a bug.** Clicks with no value for the dimension are folded into it rather than dropped. Geo is unavailable for private/loopback IPs and OS is often unparseable, so on local data this bucket dominates.
+2. **`data` rows may not sum to 100%.** Rows are capped at `limit` (default 20, max 100), while `percentage` is always relative to the full `total_clicks`. A long tail beyond the cap is simply not listed.
+3. **The series only comes back on the overview.** Switching dimensions shouldn't recompute a trend the page already has, so breakdowns omit it.
+
+Responses are cached in Redis for 60s per `(campaign, group_by, range)`. If Redis is down the endpoint still answers correctly from Postgres, just slower.
 
 ### `GET /{shortCode}` — the public redirect
 

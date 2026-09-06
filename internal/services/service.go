@@ -12,18 +12,24 @@ import (
 )
 
 type Service struct {
-	Users  IUserService
-	Auth   IAuthService
-	Urls   IUrlService
-	Clicks IClickService
+	Users     IUserService
+	Auth      IAuthService
+	Urls      IUrlService
+	Clicks    IClickService
+	Analytics IAnalyticsService
 }
 
-func NewService(repository *repositories.Repository, cfg *config.Config, clickQueue *queue.ClickQueue, geoipReader *geoip.Reader, shortURLCache *cache.ShortURLCache) *Service {
+func NewService(repository *repositories.Repository, cfg *config.Config, clickQueue *queue.ClickQueue, geoipReader *geoip.Reader, shortURLCache *cache.ShortURLCache, analyticsCache *cache.AnalyticsCache) *Service {
+	// Analytics reuses UrlService's ownership check, so it takes the concrete
+	// service rather than going through the interface.
+	urls := NewUrlService(repository, shortURLCache)
+
 	return &Service{
-		Users:  NewUserService(repository),
-		Auth:   NewAuthService(repository, cfg),
-		Urls:   NewUrlService(repository, shortURLCache),
-		Clicks: NewClickService(repository, clickQueue, geoipReader),
+		Users:     NewUserService(repository),
+		Auth:      NewAuthService(repository, cfg),
+		Urls:      urls,
+		Clicks:    NewClickService(repository, clickQueue, geoipReader),
+		Analytics: NewAnalyticsService(repository, urls, analyticsCache),
 	}
 }
 
@@ -50,4 +56,8 @@ type IUrlService interface {
 type IClickService interface {
 	RecordClick(ctx context.Context, input RecordClickInput) error
 	PersistClick(event models.ClickEvent) error
+}
+
+type IAnalyticsService interface {
+	ClickAnalytics(ctx context.Context, userID int, query ClickAnalyticsQuery) (*ClickAnalyticsResult, error)
 }

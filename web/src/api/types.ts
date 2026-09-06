@@ -28,3 +28,22 @@ export type ShortenResult =
 
 /** The two values PUT accepts. The other statuses are derived, never sent. */
 export type StatusIntent = "ACTIVE" | "DISABLED"
+
+export type ClickAnalytics = Schemas["ClickAnalytics"]
+
+/** Dimensions the analytics endpoint can group by. */
+export type ClickDimension = "country" | "city" | "region" | "device" | "browser" | "os"
+
+/**
+ * The api uses one schema for both analytics shapes (overview vs breakdown),
+ * so `data` and `series` are optional on it. Narrowing here keeps the
+ * components free of non-null assertions.
+ */
+export type BreakdownRow = NonNullable<ClickAnalytics["data"]>[number]
+export type SeriesPoint = NonNullable<ClickAnalytics["series"]>[number]
+
+/** A resolved time range. The api takes RFC3339 strings. */
+export type AnalyticsRange = {
+  start: Date
+  end: Date
+}

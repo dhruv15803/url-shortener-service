@@ -56,6 +56,7 @@ type IUrlHandler interface {
 	ListCampaigns(w http.ResponseWriter, r *http.Request)
 	GetCampaign(w http.ResponseWriter, r *http.Request)
 	UpdateCampaign(w http.ResponseWriter, r *http.Request)
+	GetCampaignClicks(w http.ResponseWriter, r *http.Request)
 	RegisterRoutes(r chi.Router)
 }
 

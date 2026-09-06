@@ -400,6 +400,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/urls/{shortCode}/clicks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Click analytics for a campaign
+         * @description Two response shapes, selected by whether `group_by` is present:
+         *
+         *     - **without `group_by`** — the overview: `total_clicks` plus a bucketed
+         *       `series` for the trend line.
+         *     - **with `group_by`** — a breakdown: `total_clicks` plus `data`, the top
+         *       values for that dimension.
+         *
+         *     The series is deliberately only returned for the overview, so switching
+         *     dimensions doesn't recompute a trend the page already has.
+         *
+         *     **Range**: defaults to the last **7 days**; maximum window is **90 days**
+         *     (a larger request is rejected rather than silently truncated). Bucket
+         *     granularity follows the window — hourly for ranges of 2 days or less,
+         *     daily beyond that.
+         *
+         *     **Percentages** are relative to `total_clicks`. Rows are capped at
+         *     `limit`, so the listed rows may legitimately sum to less than 100%.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Omit for the overview. */
+                    group_by?: "country" | "city" | "region" | "device" | "browser" | "os";
+                    /** @description RFC3339. Defaults to `end_ts` minus 7 days. */
+                    start_ts?: string;
+                    /** @description RFC3339. Defaults to now. */
+                    end_ts?: string;
+                    /** @description Max breakdown rows, busiest first. Ignored for the overview. */
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    shortCode: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Overview or breakdown, depending on `group_by`. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ClickAnalytics"];
+                    };
+                };
+                /**
+                 * @description Unknown `group_by`, unparseable timestamp, `start_ts` not before
+                 *     `end_ts`, or a window longer than 90 days.
+                 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/destinations/{destinationId}/short-urls": {
         parameters: {
             query?: never;
@@ -541,6 +621,44 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        ClickAnalytics: {
+            /** @description The range actually used, after defaults were applied. */
+            range: {
+                /** Format: date-time */
+                start_ts: string;
+                /** Format: date-time */
+                end_ts: string;
+            };
+            /** @description Clicks in the range. Percentages are relative to this. */
+            total_clicks: number;
+            /**
+             * @description Echoed back; present only on a breakdown.
+             * @enum {string}
+             */
+            group_by?: "country" | "city" | "region" | "device" | "browser" | "os";
+            /** @description Breakdown rows, busiest first. Present only with `group_by`. */
+            data?: {
+                /**
+                 * @description The dimension value. Clicks with no value for the dimension
+                 *     are folded into a literal `"unknown"` row rather than dropped
+                 *     — geo is missing for private IPs and OS for unparseable
+                 *     user agents, so this bucket is often significant.
+                 */
+                value: string;
+                clicks: number;
+                /** Format: double */
+                percentage: number;
+            }[];
+            /**
+             * @description Clicks per time bucket, oldest first. Present only on the overview.
+             *     Hourly for ranges up to 2 days, daily beyond.
+             */
+            series?: {
+                /** Format: date-time */
+                bucket: string;
+                clicks: number;
+            }[];
         };
         /**
          * @example {

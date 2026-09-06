@@ -61,9 +61,10 @@ func main() {
 
 	clickQueue := queue.NewClickQueue(redisClient)
 	shortURLCache := cache.NewShortURLCache(redisClient)
+	analyticsCache := cache.NewAnalyticsCache(redisClient)
 
 	repository := repositories.NewRepository(db)
-	service := services.NewService(repository, cfg, clickQueue, geoipReader, shortURLCache)
+	service := services.NewService(repository, cfg, clickQueue, geoipReader, shortURLCache, analyticsCache)
 	handler := handlers.NewHandler(service, cfg)
 
 	r := chi.NewRouter()

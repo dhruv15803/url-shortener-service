@@ -96,6 +96,7 @@ func (h *UrlHandler) RegisterRoutes(r chi.Router) {
 		r.Post("/", h.CreateOrGetDestination)
 		r.Get("/{shortCode}", h.GetCampaign)
 		r.Put("/{shortCode}", h.UpdateCampaign)
+		r.Get("/{shortCode}/clicks", h.GetCampaignClicks)
 	})
 
 	r.Route("/destinations", func(r chi.Router) {
