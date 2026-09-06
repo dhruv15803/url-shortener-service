@@ -13,6 +13,7 @@ type Config struct {
 	ReadTimeout     time.Duration
 	WriteTimeout    time.Duration
 	ShortURLBaseURL string
+	FrontendURL     string
 	GeoIPDBPath     string
 	DbConfig        *DbConfig
 	OAuthConfig     *OAuthConfig
@@ -20,12 +21,13 @@ type Config struct {
 	RedisConfig     *RedisConfig
 }
 
-func NewConfig(port string, readTimeout, writeTimeout time.Duration, shortURLBaseURL string, geoIPDBPath string, dbConfig *DbConfig, oauthConfig *OAuthConfig, jwtConfig *JWTConfig, redisConfig *RedisConfig) *Config {
+func NewConfig(port string, readTimeout, writeTimeout time.Duration, shortURLBaseURL string, frontendURL string, geoIPDBPath string, dbConfig *DbConfig, oauthConfig *OAuthConfig, jwtConfig *JWTConfig, redisConfig *RedisConfig) *Config {
 	return &Config{
 		Port:            port,
 		ReadTimeout:     readTimeout,
 		WriteTimeout:    writeTimeout,
 		ShortURLBaseURL: shortURLBaseURL,
+		FrontendURL:     frontendURL,
 		GeoIPDBPath:     geoIPDBPath,
 		DbConfig:        dbConfig,
 		OAuthConfig:     oauthConfig,
@@ -111,6 +113,7 @@ func LoadConfig() (*Config, error) {
 	googleRedirectURL := os.Getenv("GOOGLE_REDIRECT_URL")
 	jwtSecret := os.Getenv("JWT_SECRET")
 	shortURLBaseURL := os.Getenv("SHORT_URL_BASE_URL")
+	frontendURL := os.Getenv("FRONTEND_URL")
 	geoIPDBPath := os.Getenv("GEOIP_DB_PATH")
 	redisAddr := os.Getenv("REDIS_ADDR")
 
@@ -130,6 +133,10 @@ func LoadConfig() (*Config, error) {
 		return nil, errors.New("$SHORT_URL_BASE_URL is not set")
 	}
 
+	if frontendURL == "" {
+		return nil, errors.New("$FRONTEND_URL is not set")
+	}
+
 	if redisAddr == "" {
 		return nil, errors.New("$REDIS_ADDR is not set")
 	}
@@ -146,7 +153,7 @@ func LoadConfig() (*Config, error) {
 	oauthConfig := NewOAuthConfig(googleClientID, googleClientSecret, googleRedirectURL)
 	jwtConfig := NewJWTConfig(jwtSecret, jwtExpiry)
 	redisConfig := NewRedisConfig(redisAddr, os.Getenv("REDIS_PASSWORD"), 0)
-	return NewConfig(port, readTimeout, writeTimeout, shortURLBaseURL, geoIPDBPath, dbConfig, oauthConfig, jwtConfig, redisConfig), nil
+	return NewConfig(port, readTimeout, writeTimeout, shortURLBaseURL, frontendURL, geoIPDBPath, dbConfig, oauthConfig, jwtConfig, redisConfig), nil
 }
 
 // LoadWorkerConfig loads only what the click worker needs - the database it

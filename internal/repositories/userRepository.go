@@ -19,6 +19,17 @@ func (u *UserRepository) DeleteUserByID(id int) error {
 	return nil
 }
 
+func (u *UserRepository) GetUserByID(id int) (*models.User, error) {
+	query := `SELECT * FROM users WHERE id = $1`
+
+	var user models.User
+	if err := u.db.Get(&user, query, id); err != nil {
+		return nil, err
+	}
+
+	return &user, nil
+}
+
 // UpsertGoogleUser inserts a new Google-authenticated user, or refreshes the
 // email/image_url of an existing one matched by google_id, in a single
 // atomic statement.

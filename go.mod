@@ -14,6 +14,7 @@ require (
 require (
 	cloud.google.com/go/compute/metadata v0.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/go-chi/cors v1.2.2 // indirect
 	github.com/mssola/user_agent v0.6.0 // indirect
 	github.com/oschwald/geoip2-golang v1.13.0 // indirect
 	github.com/oschwald/maxminddb-golang v1.13.0 // indirect

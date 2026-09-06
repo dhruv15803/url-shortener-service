@@ -35,6 +35,33 @@ components:
       description: JWT session cookie set by `GET /api/auth/callback`. Expires after 24h.
 
   schemas:
+    User:
+      type: object
+      required: [id, email, username, is_verified, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+          format: email
+        username:
+          type: string
+          description: Derived from the email local-part at signup.
+        image_url:
+          type: [string, "null"]
+          description: Google profile picture.
+        is_verified:
+          type: boolean
+        verified_at:
+          type: [string, "null"]
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
     Error:
       type: object
       required: [error]
@@ -301,32 +328,63 @@ paths:
           schema:
             type: string
       responses:
-        '200':
-          description: Signed in. The JWT is in the `Set-Cookie` header, not the body.
+        '302':
+          description: |
+            Always a redirect, because a browser lands here — never a JSON body.
+
+            On success the `session` cookie is set and the user is sent to
+            `FRONTEND_URL`. On failure they are sent to
+            `FRONTEND_URL/login?error=<code>`, where the code is one of
+            `login_cancelled`, `invalid_state`, `missing_code`, `login_failed`.
           headers:
+            Location:
+              schema:
+                type: string
+                examples: ["http://localhost:5173"]
             Set-Cookie:
+              description: Present only on success.
               schema:
                 type: string
                 examples: ["session=<jwt>; HttpOnly; SameSite=Lax"]
+
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user
+      description: |
+        Lets a SPA bootstrap auth state on load, since the `session` cookie is
+        httpOnly and cannot be read by JavaScript. A 401 means "not signed in"
+        and should be treated as a normal state, not an error.
+      responses:
+        '200':
+          description: The signed-in user.
           content:
             application/json:
               schema:
                 type: object
+                required: [user]
                 properties:
                   user:
-                    type: object
-                    properties:
-                      id: { type: integer }
-                      email: { type: string, format: email }
-                      username: { type: string }
-                      image_url: { type: [string, "null"] }
-                      is_verified: { type: boolean }
-        '400':
-          description: Consent denied, missing code, or `state` mismatch.
-          content:
-            application/json:
+                    $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Sign out
+      security: []
+      description: |
+        Clears the `session` cookie. Intentionally unauthenticated, so an
+        expired or malformed cookie can still be cleared.
+      responses:
+        '204':
+          description: Signed out.
+          headers:
+            Set-Cookie:
               schema:
-                $ref: '#/components/schemas/Error'
+                type: string
+                examples: ["session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"]
 
   /api/urls:
     get:

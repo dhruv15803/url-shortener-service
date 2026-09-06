@@ -47,9 +47,21 @@ Google OAuth is the only sign-in method. There is no password login or registrat
 1. Browser hits `GET /api/auth/google/login`. The server sets a 10-minute `oauth_state` cookie (CSRF protection) and 307s to Google.
 2. The user consents. Google redirects to `GET /api/auth/callback?code=…&state=…`.
 3. The server verifies `state` against the cookie, exchanges the code, fetches the Google profile, creates or refreshes the user, and sets a **`session`** cookie containing a JWT valid for **24 hours**.
-4. Every `/api/urls` request must carry that cookie.
+4. The callback then **302s back to `FRONTEND_URL`** — it never returns a body. On failure it redirects to `FRONTEND_URL/login?error=<code>` (`login_cancelled`, `invalid_state`, `missing_code`, `login_failed`).
+5. Every `/api/urls` request must carry that cookie.
 
-**The JWT is only in the `Set-Cookie` header** — the callback's JSON body contains the user, not the token.
+**The JWT only ever appears in the `Set-Cookie` header.**
+
+Two companion endpoints:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/auth/me` | Current user, or 401. Lets a SPA bootstrap auth state — the cookie is httpOnly so JS can't read it. Treat 401 as "signed out", not an error. |
+| `POST` | `/api/auth/logout` | Clears the cookie, 204. Unauthenticated on purpose, so a stale cookie can always be cleared. |
+
+### CORS
+
+The API allows exactly one origin, from `FRONTEND_URL`, with `Access-Control-Allow-Credentials: true`. A wildcard is not permitted alongside credentials, so any frontend on a different origin must be added there. Browser clients need `withCredentials: true` (axios) or `credentials: 'include'` (fetch), or the session cookie won't be sent.
 
 ### Getting a token for Postman / curl
 
@@ -116,7 +128,9 @@ All `/api/urls*` endpoints require the `session` cookie. `GET /{shortCode}` and 
 |---|---|---|
 | `GET` | `/api/health` | Liveness check |
 | `GET` | `/api/auth/google/login` | Start Google sign-in (browser only) |
-| `GET` | `/api/auth/callback` | OAuth callback; sets the `session` cookie |
+| `GET` | `/api/auth/callback` | OAuth callback; sets the cookie, then 302s to the frontend |
+| `GET` | `/api/auth/me` | Current user, or 401 |
+| `POST` | `/api/auth/logout` | Clear the session cookie |
 | `GET` | `/api/urls` | List your campaigns (`?limit=&offset=`) |
 | `POST` | `/api/urls` | Shorten a URL (find-or-create the destination) |
 | `GET` | `/api/urls/{shortCode}` | Fetch one campaign |

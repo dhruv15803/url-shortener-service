@@ -29,6 +29,7 @@ func NewService(repository *repositories.Repository, cfg *config.Config, clickQu
 
 type IUserService interface {
 	DeleteUserByID(id int) error
+	GetUserByID(id int) (*models.User, error)
 }
 
 type IAuthService interface {

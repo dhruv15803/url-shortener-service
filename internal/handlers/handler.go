@@ -18,7 +18,7 @@ type Handler struct {
 func NewHandler(service *services.Service, cfg *config.Config) *Handler {
 	return &Handler{
 		Users:    NewUserHandler(service),
-		Auth:     NewAuthHandler(service),
+		Auth:     NewAuthHandler(service, cfg.JWTConfig.Secret, cfg.FrontendURL),
 		Urls:     NewUrlHandler(service, cfg.JWTConfig.Secret, cfg.ShortURLBaseURL),
 		Redirect: NewRedirectHandler(service),
 	}
@@ -45,6 +45,8 @@ type IUserHandler interface {
 type IAuthHandler interface {
 	GoogleLogin(w http.ResponseWriter, r *http.Request)
 	GoogleCallback(w http.ResponseWriter, r *http.Request)
+	Me(w http.ResponseWriter, r *http.Request)
+	Logout(w http.ResponseWriter, r *http.Request)
 	RegisterRoutes(r chi.Router)
 }
 

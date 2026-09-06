@@ -14,6 +14,7 @@ import (
 	"github.com/dhruv15803/url-shortener-service/internal/repositories"
 	"github.com/dhruv15803/url-shortener-service/internal/services"
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/cors"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -66,6 +67,18 @@ func main() {
 	handler := handlers.NewHandler(service, cfg)
 
 	r := chi.NewRouter()
+
+	// Must be registered before any routes: chi only applies middleware added
+	// ahead of route registration on a given mux. The origin has to be exact
+	// rather than "*", because the session cookie makes these credentialed
+	// requests.
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{cfg.FrontendURL},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "OPTIONS"},
+		AllowedHeaders:   []string{"Content-Type"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}))
 
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/health", func(w http.ResponseWriter, r *http.Request) {

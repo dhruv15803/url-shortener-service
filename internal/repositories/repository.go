@@ -25,6 +25,7 @@ func NewRepository(db *sqlx.DB) *Repository {
 
 type IUserRepository interface {
 	DeleteUserByID(id int) error
+	GetUserByID(id int) (*models.User, error)
 	UpsertGoogleUser(user *models.User) (*models.User, error)
 }
 
