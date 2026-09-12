@@ -436,8 +436,15 @@ export interface paths {
                     start_ts?: string;
                     /** @description RFC3339. Defaults to now. */
                     end_ts?: string;
-                    /** @description Max breakdown rows, busiest first. Ignored for the overview. */
+                    /** @description Breakdown rows per page, busiest first. Ignored for the overview. */
                     limit?: number;
+                    /**
+                     * @description Rows to skip, for paging a breakdown. Ignored for the overview.
+                     *     Use `offset = limit * (page - 1)`; page count comes from
+                     *     `total_groups`, **not** from `total_clicks` (that counts clicks,
+                     *     not rows).
+                     */
+                    offset?: number;
                 };
                 header?: never;
                 path: {
@@ -650,6 +657,16 @@ export interface components {
                 /** Format: double */
                 percentage: number;
             }[];
+            /**
+             * @description Number of distinct values for the dimension in the range - the row
+             *     count, not the click count. Present only on a breakdown; this is
+             *     what page counts are derived from.
+             */
+            total_groups?: number;
+            /** @description Rows per page actually applied. Breakdown only. */
+            limit?: number;
+            /** @description Rows skipped. Breakdown only; present and `0` on page one. */
+            offset?: number;
             /**
              * @description Clicks per time bucket, oldest first. Present only on the overview.
              *     Hourly for ranges up to 2 days, daily beyond.

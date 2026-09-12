@@ -31,11 +31,15 @@ func NewAnalyticsCache(client *redis.Client) *AnalyticsCache {
 // Key identifies one analytics answer. The range must already be normalised
 // and rounded by the caller - keying on a raw "now" would miss on every
 // request as the clock moves.
-func AnalyticsKey(shortURLID int, groupBy string, start time.Time, end time.Time) string {
+//
+// limit and offset are part of the key because paging changes only the
+// offset: without them every page would be served page one's payload for the
+// whole ttl, and two callers using different limits would collide.
+func AnalyticsKey(shortURLID int, groupBy string, start time.Time, end time.Time, limit int, offset int) string {
 	if groupBy == "" {
 		groupBy = "overview"
 	}
-	return fmt.Sprintf("%s%d:%s:%d:%d", analyticsKeyPrefix, shortURLID, groupBy, start.Unix(), end.Unix())
+	return fmt.Sprintf("%s%d:%s:%d:%d:%d:%d", analyticsKeyPrefix, shortURLID, groupBy, start.Unix(), end.Unix(), limit, offset)
 }
 
 // Get decodes a cached payload into out. ErrCacheMiss means "ask postgres";

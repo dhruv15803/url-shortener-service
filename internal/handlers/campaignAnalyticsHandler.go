@@ -28,6 +28,7 @@ func (h *UrlHandler) GetCampaignClicks(w http.ResponseWriter, r *http.Request) {
 	query := services.ClickAnalyticsQuery{
 		ShortCode: chi.URLParam(r, "shortCode"),
 		Limit:     intQueryParam(r, "limit", services.DefaultAnalyticsLimit),
+		Offset:    intQueryParam(r, "offset", 0),
 	}
 
 	if raw := strings.TrimSpace(r.URL.Query().Get("group_by")); raw != "" {

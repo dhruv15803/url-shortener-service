@@ -47,6 +47,7 @@ type IShortURLRepository interface {
 type IClickRepository interface {
 	Create(event models.ClickEvent) error
 	CountByShortURL(shortURLID int, start time.Time, end time.Time) (int, error)
-	GroupByDimension(shortURLID int, dimension ClickDimension, start time.Time, end time.Time, limit int) ([]DimensionCount, error)
+	GroupByDimension(shortURLID int, dimension ClickDimension, start time.Time, end time.Time, limit int, offset int) ([]DimensionCount, error)
+	CountDimensionGroups(shortURLID int, dimension ClickDimension, start time.Time, end time.Time) (int, error)
 	SeriesByBucket(shortURLID int, bucket BucketSize, start time.Time, end time.Time) ([]BucketCount, error)
 }

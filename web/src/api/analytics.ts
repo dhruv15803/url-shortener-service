@@ -17,15 +17,15 @@ export const analyticsApi = {
     return data
   },
 
-  /** One dimension's breakdown, busiest first. */
+  /** One page of a dimension's breakdown, busiest first. */
   async breakdown(
     shortCode: string,
     dimension: ClickDimension,
     range: AnalyticsRange,
-    limit = 10,
+    paging: { limit: number; offset: number },
   ): Promise<ClickAnalytics> {
     const { data } = await client.get<ClickAnalytics>(`/api/urls/${shortCode}/clicks`, {
-      params: { ...rangeParams(range), group_by: dimension, limit },
+      params: { ...rangeParams(range), group_by: dimension, ...paging },
     })
     return data
   },

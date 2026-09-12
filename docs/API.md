@@ -226,6 +226,31 @@ One endpoint, two shapes, chosen by whether `group_by` is present.
 
 `group_by` accepts **`country`, `city`, `region`, `device`, `browser`, `os`**. Anything else is a 400 listing the valid values. (`referrer` is intentionally absent — it stores raw URLs, so it needs host normalisation before grouping is useful.)
 
+**Paging a breakdown**
+
+Breakdowns are paged with `limit` (default 20, max 100) and `offset`, the same convention as `GET /api/urls`:
+
+```bash
+curl -b "session=$SESSION"   "http://localhost:8080/api/urls/OQ/clicks?group_by=city&limit=20&offset=20"   # page 2
+```
+
+The response echoes `limit`, `offset` and adds **`total_groups`** — the number of *distinct values* for that dimension:
+
+```jsonc
+{ "group_by": "city", "total_clicks": 504,
+  "total_groups": 12, "limit": 20, "offset": 0,
+  "data": [ { "value": "Mumbai", "clicks": 188, "percentage": 37.3 } ] }
+```
+
+Compute pages from `total_groups`, **not** `total_clicks` — the latter counts clicks, not rows, so 504 clicks across 12 cities would suggest 26 pages when there is only one:
+
+```
+offset     = limit * (page - 1)
+page count = ceil(total_groups / limit)
+```
+
+These three fields appear only on a breakdown; an overview response has none of them.
+
 **Time range**
 
 | | |
@@ -243,7 +268,7 @@ curl -b "session=$SESSION" \
 **Three things that will otherwise surprise you**
 
 1. **The `"unknown"` bucket is real data, not a bug.** Clicks with no value for the dimension are folded into it rather than dropped. Geo is unavailable for private/loopback IPs and OS is often unparseable, so on local data this bucket dominates.
-2. **`data` rows may not sum to 100%.** Rows are capped at `limit` (default 20, max 100), while `percentage` is always relative to the full `total_clicks`. A long tail beyond the cap is simply not listed.
+2. **`data` rows on one page won't sum to 100%.** `percentage` is always a share of the full `total_clicks`, never of the current page — so page 2 of a breakdown might total 27%. Summing every page reaches 100%.
 3. **The series only comes back on the overview.** Switching dimensions shouldn't recompute a trend the page already has, so breakdowns omit it.
 
 Responses are cached in Redis for 60s per `(campaign, group_by, range)`. If Redis is down the endpoint still answers correctly from Postgres, just slower.

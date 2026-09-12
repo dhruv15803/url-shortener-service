@@ -105,6 +105,18 @@ components:
               percentage:
                 type: number
                 format: double
+        total_groups:
+          type: integer
+          description: |
+            Number of distinct values for the dimension in the range - the row
+            count, not the click count. Present only on a breakdown; this is
+            what page counts are derived from.
+        limit:
+          type: integer
+          description: Rows per page actually applied. Breakdown only.
+        offset:
+          type: integer
+          description: Rows skipped. Breakdown only; present and `0` on page one.
         series:
           type: array
           description: |
@@ -640,12 +652,24 @@ paths:
         - name: limit
           in: query
           required: false
-          description: Max breakdown rows, busiest first. Ignored for the overview.
+          description: Breakdown rows per page, busiest first. Ignored for the overview.
           schema:
             type: integer
             default: 20
             maximum: 100
             minimum: 1
+        - name: offset
+          in: query
+          required: false
+          description: |
+            Rows to skip, for paging a breakdown. Ignored for the overview.
+            Use `offset = limit * (page - 1)`; page count comes from
+            `total_groups`, **not** from `total_clicks` (that counts clicks,
+            not rows).
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
       responses:
         '200':
           description: Overview or breakdown, depending on `group_by`.

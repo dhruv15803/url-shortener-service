@@ -120,30 +120,55 @@ func (c *ClickRepository) CountByShortURL(shortURLID int, start time.Time, end t
 	return total, nil
 }
 
-// GroupByDimension returns the top `limit` values for a dimension, busiest
-// first. The column name comes from the typed dimension, never from input.
-func (c *ClickRepository) GroupByDimension(shortURLID int, dimension ClickDimension, start time.Time, end time.Time, limit int) ([]DimensionCount, error) {
+// GroupByDimension returns one page of a dimension's values, busiest first.
+// The column name comes from the typed dimension, never from input.
+func (c *ClickRepository) GroupByDimension(shortURLID int, dimension ClickDimension, start time.Time, end time.Time, limit int, offset int) ([]DimensionCount, error) {
 	column, ok := dimension.column()
 	if !ok {
 		return nil, fmt.Errorf("unsupported click dimension: %q", dimension)
 	}
 
-	// The value tiebreak keeps ordering stable when counts are equal.
+	// The value tiebreak is what makes paging safe: with equal counts and no
+	// secondary sort, rows could reorder between pages and be duplicated or
+	// skipped entirely.
 	query := fmt.Sprintf(`
 		SELECT COALESCE(%s, '%s') AS value, count(*) AS clicks
 		FROM clicks
 		WHERE short_url_id = $1 AND clicked_at >= $2 AND clicked_at <= $3
 		GROUP BY 1
 		ORDER BY clicks DESC, value ASC
-		LIMIT $4
+		LIMIT $4 OFFSET $5
 	`, column, UnknownDimensionValue)
 
 	counts := []DimensionCount{}
-	if err := c.db.Select(&counts, query, shortURLID, start, end, limit); err != nil {
+	if err := c.db.Select(&counts, query, shortURLID, start, end, limit, offset); err != nil {
 		return nil, err
 	}
 
 	return counts, nil
+}
+
+// CountDimensionGroups is how many distinct values a dimension has in the
+// range - the row count, not the click count, so the client can work out how
+// many pages there are.
+func (c *ClickRepository) CountDimensionGroups(shortURLID int, dimension ClickDimension, start time.Time, end time.Time) (int, error) {
+	column, ok := dimension.column()
+	if !ok {
+		return 0, fmt.Errorf("unsupported click dimension: %q", dimension)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT count(DISTINCT COALESCE(%s, '%s'))
+		FROM clicks
+		WHERE short_url_id = $1 AND clicked_at >= $2 AND clicked_at <= $3
+	`, column, UnknownDimensionValue)
+
+	var total int
+	if err := c.db.Get(&total, query, shortURLID, start, end); err != nil {
+		return 0, err
+	}
+
+	return total, nil
 }
 
 func (c *ClickRepository) SeriesByBucket(shortURLID int, bucket BucketSize, start time.Time, end time.Time) ([]BucketCount, error) {

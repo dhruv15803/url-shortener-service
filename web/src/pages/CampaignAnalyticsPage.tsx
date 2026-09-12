@@ -14,15 +14,17 @@ import {
   DEFAULT_PRESET_ID,
   RANGE_PRESETS,
 } from "@/components/analytics/AnalyticsRangePicker"
-import { BreakdownCard } from "@/components/analytics/BreakdownCard"
+import { BreakdownTable } from "@/components/analytics/BreakdownTable"
 import { ClicksTrendChart } from "@/components/analytics/ClicksTrendChart"
 import { useCampaign } from "@/hooks/useCampaigns"
-import { useAnalyticsBreakdowns, useAnalyticsOverview } from "@/hooks/useAnalytics"
+import {
+  BREAKDOWN_PAGE_SIZE,
+  useAnalyticsBreakdown,
+  useAnalyticsOverview,
+} from "@/hooks/useAnalytics"
 import { densifySeries, granularityFor } from "@/lib/analytics"
 import { ApiError } from "@/api/client"
 import type { AnalyticsRange, ClickDimension } from "@/api/types"
-
-const DIMENSIONS: ClickDimension[] = ["country", "device", "browser", "os"]
 
 const defaultRange = () =>
   RANGE_PRESETS.find((preset) => preset.id === DEFAULT_PRESET_ID)!.build()
@@ -32,10 +34,12 @@ export default function CampaignAnalyticsPage() {
 
   const [presetId, setPresetId] = useState<string | null>(DEFAULT_PRESET_ID)
   const [range, setRange] = useState<AnalyticsRange>(defaultRange)
+  const [dimension, setDimension] = useState<ClickDimension | null>(null)
+  const [page, setPage] = useState(1)
 
   const campaign = useCampaign(shortCode)
   const overview = useAnalyticsOverview(shortCode, range)
-  const breakdowns = useAnalyticsBreakdowns(shortCode, DIMENSIONS, range)
+  const breakdown = useAnalyticsBreakdown(shortCode, dimension, range, page)
 
   const granularity = granularityFor(range)
   const points = useMemo(
@@ -71,6 +75,8 @@ export default function CampaignAnalyticsPage() {
                 onChange={(nextRange, nextPreset) => {
                   setRange(nextRange)
                   setPresetId(nextPreset)
+                  // A narrower range can have fewer pages than we're on.
+                  setPage(1)
                 }}
               />
             </div>
@@ -107,20 +113,23 @@ export default function CampaignAnalyticsPage() {
               </CardContent>
             </Card>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              {DIMENSIONS.map((dimension, index) => {
-                const query = breakdowns[index]
-                return (
-                  <BreakdownCard
-                    key={dimension}
-                    dimension={dimension}
-                    rows={query?.data?.data ?? []}
-                    isLoading={query?.isLoading ?? true}
-                    error={(query?.error as Error | null) ?? null}
-                  />
-                )
-              })}
-            </div>
+            <BreakdownTable
+              dimension={dimension}
+              onDimensionChange={(next) => {
+                setDimension(next)
+                // Dimensions have different page counts; staying on page 3
+                // while switching to a 3-row dimension shows an empty table.
+                setPage(1)
+              }}
+              rows={breakdown.data?.data ?? []}
+              totalClicks={totalClicks}
+              totalGroups={breakdown.data?.total_groups ?? 0}
+              page={page}
+              pageSize={BREAKDOWN_PAGE_SIZE}
+              onPageChange={setPage}
+              isLoading={dimension !== null && breakdown.isLoading}
+              error={(breakdown.error as Error | null) ?? null}
+            />
           </>
         )}
       </main>

@@ -31,6 +31,7 @@ func (h *RedirectHandler) RegisterRoutes(r chi.Router) {
 }
 
 func (h *RedirectHandler) Redirect(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	shortCode := chi.URLParam(r, "shortCode")
 
 	destinationURL, shortURLID, err := h.service.Urls.ResolveShortCode(r.Context(), shortCode)
@@ -50,6 +51,8 @@ func (h *RedirectHandler) Redirect(w http.ResponseWriter, r *http.Request) {
 		Referrer:   r.Referer(),
 	})
 
+	responseTime := time.Since(start)
+	log.Printf("redirection response time ms :- %v\n", responseTime.Milliseconds())
 	http.Redirect(w, r, destinationURL, http.StatusFound)
 }
 

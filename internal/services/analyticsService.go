@@ -29,6 +29,7 @@ type ClickAnalyticsQuery struct {
 	StartTS   *time.Time
 	EndTS     *time.Time
 	Limit     int
+	Offset    int
 }
 
 type TimeRange struct {
@@ -53,6 +54,17 @@ type ClickAnalyticsResult struct {
 	GroupBy     string           `json:"group_by,omitempty"`
 	Data        []DimensionSlice `json:"data,omitempty"`
 	Series      []SeriesPoint    `json:"series,omitempty"`
+
+	// Paging metadata, breakdowns only. TotalGroups is the number of distinct
+	// values - the row count, not the click count - which is what the client
+	// needs to work out how many pages there are.
+	//
+	// Pointers so a breakdown always reports all three (offset 0 and
+	// total_groups 0 included) while an overview reports none. With plain ints
+	// and omitempty, page one would silently drop "offset": 0.
+	TotalGroups *int `json:"total_groups,omitempty"`
+	Limit       *int `json:"limit,omitempty"`
+	Offset      *int `json:"offset,omitempty"`
 }
 
 type AnalyticsService struct {
@@ -98,7 +110,10 @@ func (s *AnalyticsService) ClickAnalytics(ctx context.Context, userID int, query
 		groupBy = string(*query.GroupBy)
 	}
 
-	key := cache.AnalyticsKey(shortURL.ID, groupBy, cacheRange.StartTS, cacheRange.EndTS)
+	limit := resolveLimit(query.Limit)
+	offset := resolveOffset(query.Offset)
+
+	key := cache.AnalyticsKey(shortURL.ID, groupBy, cacheRange.StartTS, cacheRange.EndTS, limit, offset)
 
 	var cached ClickAnalyticsResult
 	if err := s.cache.Get(ctx, key, &cached); err == nil {
@@ -113,6 +128,8 @@ func (s *AnalyticsService) ClickAnalytics(ctx context.Context, userID int, query
 	}
 
 	result := &ClickAnalyticsResult{Range: timeRange, TotalClicks: total}
+	// total = 500 , for a dimesion = "country"
+	// "india" , "usa" , "uk" , null -> 500 / 20  = 25 pages
 
 	if query.GroupBy == nil {
 		points, err := s.repository.Clicks.SeriesByBucket(shortURL.ID, bucket, timeRange.StartTS, timeRange.EndTS)
@@ -125,12 +142,20 @@ func (s *AnalyticsService) ClickAnalytics(ctx context.Context, userID int, query
 			result.Series = append(result.Series, SeriesPoint{Bucket: point.Bucket, Clicks: point.Clicks})
 		}
 	} else {
-		counts, err := s.repository.Clicks.GroupByDimension(shortURL.ID, *query.GroupBy, timeRange.StartTS, timeRange.EndTS, resolveLimit(query.Limit))
+		counts, err := s.repository.Clicks.GroupByDimension(shortURL.ID, *query.GroupBy, timeRange.StartTS, timeRange.EndTS, limit, offset)
+		if err != nil {
+			return nil, err
+		}
+
+		totalGroups, err := s.repository.Clicks.CountDimensionGroups(shortURL.ID, *query.GroupBy, timeRange.StartTS, timeRange.EndTS)
 		if err != nil {
 			return nil, err
 		}
 
 		result.GroupBy = groupBy
+		result.TotalGroups = &totalGroups
+		result.Limit = &limit
+		result.Offset = &offset
 		result.Data = make([]DimensionSlice, 0, len(counts))
 		for _, count := range counts {
 			result.Data = append(result.Data, DimensionSlice{
@@ -196,6 +221,13 @@ func resolveLimit(limit int) int {
 		return MaxAnalyticsLimit
 	}
 	return limit
+}
+
+func resolveOffset(offset int) int {
+	if offset < 0 {
+		return 0
+	}
+	return offset
 }
 
 func percentageOf(clicks int, total int) float64 {
