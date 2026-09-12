@@ -48,7 +48,7 @@ type IUrlService interface {
 	FindOrCreateDestination(ctx context.Context, userID int, input CreateDestinationInput) (*FindOrCreateDestinationResult, error)
 	CreateShortURLForDestination(ctx context.Context, userID int, destinationID int, input CreateShortURLInput) (*models.ShortURL, error)
 	ResolveShortCode(ctx context.Context, shortCode string) (string, int, error)
-	ListCampaigns(userID int, limit int, offset int) ([]*CampaignView, int, error)
+	ListCampaigns(userID int, filter repositories.CampaignFilter, limit int, offset int) ([]*CampaignView, int, error)
 	GetCampaign(userID int, shortCode string) (*CampaignView, error)
 	UpdateShortURL(ctx context.Context, userID int, shortCode string, input UpdateShortURLInput) (*CampaignView, error)
 }

@@ -18,9 +18,17 @@ type CampaignTableProps = {
   isLoading: boolean
   error: Error | null
   onRetry: () => void
+  /** Changes the empty state: no matches is not the same as no campaigns. */
+  isFiltered?: boolean
 }
 
-export function CampaignTable({ campaigns, isLoading, error, onRetry }: CampaignTableProps) {
+export function CampaignTable({
+  campaigns,
+  isLoading,
+  error,
+  onRetry,
+  isFiltered = false,
+}: CampaignTableProps) {
   const navigate = useNavigate()
 
   if (error) {
@@ -28,7 +36,12 @@ export function CampaignTable({ campaigns, isLoading, error, onRetry }: Campaign
   }
 
   if (!isLoading && campaigns.length === 0) {
-    return (
+    return isFiltered ? (
+      <EmptyState
+        title="No campaigns match your filters"
+        description="Try a different search term, or widen the status filter."
+      />
+    ) : (
       <EmptyState
         title="No campaigns yet"
         description="Shorten your first URL above and it will show up here."

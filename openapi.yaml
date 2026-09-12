@@ -460,8 +460,29 @@ paths:
     get:
       tags: [Campaigns]
       summary: List the authenticated user's campaigns
-      description: Newest first. `status` on each row is derived at request time.
+      description: |
+        Newest first. `status` on each row is derived at request time.
+
+        `search` and `status` filter the list server-side, so `total` counts
+        only matching campaigns and pagination stays correct.
       parameters:
+        - name: search
+          in: query
+          description: |
+            Case-insensitive substring matched against the campaign name, the
+            short code and the destination url. Whitespace-only is ignored.
+            `%` and `_` are matched literally, not as wildcards.
+          schema:
+            type: string
+            maxLength: 255
+          example: uniqlo
+        - name: status
+          in: query
+          description: |
+            Filters on the **derived** status, so `scheduled` and `expired`
+            work even though neither is ever stored.
+          schema:
+            $ref: '#/components/schemas/ShortURLStatus'
         - name: limit
           in: query
           schema:
@@ -482,6 +503,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CampaignListResponse'
+        '400':
+          description: |
+            `status` was not one of the four allowed values. Invalid `limit`,
+            `offset` and `search` values fall back instead of erroring.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: status must be one of active, scheduled, expired, disabled
         '401':
           $ref: '#/components/responses/Unauthorized'
 

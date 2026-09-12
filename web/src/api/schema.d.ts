@@ -231,10 +231,25 @@ export interface paths {
         /**
          * List the authenticated user's campaigns
          * @description Newest first. `status` on each row is derived at request time.
+         *
+         *     `search` and `status` filter the list server-side, so `total` counts
+         *     only matching campaigns and pagination stays correct.
          */
         get: {
             parameters: {
                 query?: {
+                    /**
+                     * @description Case-insensitive substring matched against the campaign name, the
+                     *     short code and the destination url. Whitespace-only is ignored.
+                     *     `%` and `_` are matched literally, not as wildcards.
+                     * @example uniqlo
+                     */
+                    search?: string;
+                    /**
+                     * @description Filters on the **derived** status, so `scheduled` and `expired`
+                     *     work even though neither is ever stored.
+                     */
+                    status?: components["schemas"]["ShortURLStatus"];
                     limit?: number;
                     offset?: number;
                 };
@@ -251,6 +266,23 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["CampaignListResponse"];
+                    };
+                };
+                /**
+                 * @description `status` was not one of the four allowed values. Invalid `limit`,
+                 *     `offset` and `search` values fall back instead of erroring.
+                 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        /**
+                         * @example {
+                         *       "error": "status must be one of active, scheduled, expired, disabled"
+                         *     }
+                         */
+                        "application/json": components["schemas"]["Error"];
                     };
                 };
                 401: components["responses"]["Unauthorized"];

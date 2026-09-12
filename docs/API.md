@@ -131,7 +131,7 @@ All `/api/urls*` endpoints require the `session` cookie. `GET /{shortCode}` and 
 | `GET` | `/api/auth/callback` | OAuth callback; sets the cookie, then 302s to the frontend |
 | `GET` | `/api/auth/me` | Current user, or 401 |
 | `POST` | `/api/auth/logout` | Clear the session cookie |
-| `GET` | `/api/urls` | List your campaigns (`?limit=&offset=`) |
+| `GET` | `/api/urls` | List your campaigns (`?search=&status=&limit=&offset=`) |
 | `POST` | `/api/urls` | Shorten a URL (find-or-create the destination) |
 | `GET` | `/api/urls/{shortCode}` | Fetch one campaign |
 | `PUT` | `/api/urls/{shortCode}` | Update name / status / schedule |
@@ -175,7 +175,30 @@ Flat rows, newest first, with the destination embedded — maps straight onto a 
 }
 ```
 
-`limit` defaults to 50 and caps at 100; `total` ignores pagination. Invalid values fall back to defaults rather than erroring.
+`limit` defaults to 50 and caps at 100. Invalid `limit`, `offset` and `search` values fall back to defaults rather than erroring.
+
+#### Filtering
+
+Two optional filters narrow the list. **Both are applied in SQL, before pagination**, so `total` counts only matching campaigns and the page count stays correct.
+
+| Param | Effect |
+| --- | --- |
+| `search` | Case-insensitive substring match against the campaign name, the short code **and** the destination url. A row matches if any of the three does. Whitespace-only is treated as absent; terms longer than 255 characters are truncated. |
+| `status` | One of `active`, `scheduled`, `expired`, `disabled`. |
+
+```bash
+curl -b "session=$SESSION"   "http://localhost:8080/api/urls?search=uniqlo&status=active&limit=10"
+```
+
+`%` and `_` in a search term are matched **literally** — searching `50%` finds campaigns containing "50%", it does not match everything.
+
+**`status` filters the derived status, not the stored column.** As described in [How status works](#how-status-works), only `active` and `disabled` are ever stored, so the server recomputes the effective status in the query itself. This is why `?status=expired` returns rows even though no row holds that value.
+
+Unlike the other parameters, an unrecognised `status` is a **400** rather than a silent fallback — answering with the full unfiltered list would look like the filter was broken:
+
+```jsonc
+{ "error": "status must be one of active, scheduled, expired, disabled" }
+```
 
 ### `PUT /api/urls/{shortCode}` — partial update
 

@@ -3,6 +3,7 @@ import type {
   AddCampaignRequest,
   Campaign,
   CampaignListResponse,
+  CampaignStatus,
   DestinationRef,
   ShortUrlRef,
   ShortenRequest,
@@ -14,7 +15,16 @@ type ShortenCreatedBody = { destination_url: DestinationRef; short_url: ShortUrl
 type ShortenExistingBody = { destination_url: DestinationRef; short_urls: ShortUrlRef[] }
 
 export const campaignsApi = {
-  async list(params: { limit: number; offset: number }): Promise<CampaignListResponse> {
+  /**
+   * Filters are applied server-side, so `total` already reflects them. Axios
+   * drops `undefined` params, which is how "no filter" is expressed.
+   */
+  async list(params: {
+    limit: number
+    offset: number
+    search?: string
+    status?: CampaignStatus
+  }): Promise<CampaignListResponse> {
     const { data } = await client.get<CampaignListResponse>("/api/urls", { params })
     return data
   },

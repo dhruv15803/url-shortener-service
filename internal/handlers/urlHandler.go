@@ -12,6 +12,7 @@ import (
 	"github.com/dhruv15803/url-shortener-service/internal/middleware"
 	"github.com/dhruv15803/url-shortener-service/internal/models"
 	"github.com/dhruv15803/url-shortener-service/internal/optional"
+	"github.com/dhruv15803/url-shortener-service/internal/repositories"
 	"github.com/dhruv15803/url-shortener-service/internal/services"
 	"github.com/go-chi/chi/v5"
 )
@@ -19,6 +20,10 @@ import (
 const (
 	defaultCampaignLimit = 50
 	maxCampaignLimit     = 100
+
+	// maxSearchLength matches the width of short_urls.name - the longest thing
+	// a search term could usefully match in full.
+	maxSearchLength = 255
 )
 
 type createDestinationRequest struct {
@@ -218,7 +223,21 @@ func (h *UrlHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) {
 		offset = 0
 	}
 
-	campaigns, total, err := h.service.Urls.ListCampaigns(userID, limit, offset)
+	filter := repositories.CampaignFilter{Search: searchQueryParam(r, "search")}
+
+	// Unlike limit and offset, an unrecognised status is rejected rather than
+	// ignored: silently dropping it would answer with the full unfiltered list,
+	// which reads as the filter being broken.
+	if raw := strings.TrimSpace(r.URL.Query().Get("status")); raw != "" {
+		status, ok := models.ParseShortURLStatus(raw)
+		if !ok {
+			httpresponse.WriteError(w, http.StatusBadRequest, "status must be one of active, scheduled, expired, disabled")
+			return
+		}
+		filter.Status = status
+	}
+
+	campaigns, total, err := h.service.Urls.ListCampaigns(userID, filter, limit, offset)
 	if err != nil {
 		httpresponse.WriteError(w, http.StatusInternalServerError, "failed to list campaigns")
 		return
@@ -305,6 +324,18 @@ func (h *UrlHandler) toCampaignResponse(campaign *services.CampaignView) campaig
 		ExpiresAt:      campaign.ShortURL.ExpiresAt,
 		CreatedAt:      campaign.ShortURL.CreatedAt,
 	}
+}
+
+// searchQueryParam reads a free-text filter. Whitespace-only is treated as
+// absent, and the value is capped so an oversized term can't be pushed into
+// the query. The cap counts runes, since slicing bytes could split one.
+func searchQueryParam(r *http.Request, name string) string {
+	value := strings.TrimSpace(r.URL.Query().Get(name))
+	if runes := []rune(value); len(runes) > maxSearchLength {
+		value = string(runes[:maxSearchLength])
+	}
+
+	return value
 }
 
 func intQueryParam(r *http.Request, name string, fallback int) int {

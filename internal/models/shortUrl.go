@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // ShortURLStatus has four values, but only two of them are ever stored.
 //
@@ -49,4 +52,22 @@ func (s *ShortURL) EffectiveStatus(now time.Time) ShortURLStatus {
 // IsResolvable reports whether the short url should redirect right now.
 func (s *ShortURL) IsResolvable(now time.Time) bool {
 	return s.EffectiveStatus(now) == ShortURLStatusActive
+}
+
+// ParseShortURLStatus accepts any of the four statuses a campaign can present,
+// including scheduled and expired, which are derived rather than stored. It is
+// for reading filters off a request - never for deciding what to write.
+func ParseShortURLStatus(raw string) (ShortURLStatus, bool) {
+	switch ShortURLStatus(strings.ToLower(strings.TrimSpace(raw))) {
+	case ShortURLStatusScheduled:
+		return ShortURLStatusScheduled, true
+	case ShortURLStatusActive:
+		return ShortURLStatusActive, true
+	case ShortURLStatusDisabled:
+		return ShortURLStatusDisabled, true
+	case ShortURLStatusExpired:
+		return ShortURLStatusExpired, true
+	default:
+		return "", false
+	}
 }

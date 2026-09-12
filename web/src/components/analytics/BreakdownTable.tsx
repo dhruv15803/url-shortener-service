@@ -79,6 +79,11 @@ export function BreakdownTable({
               variant={option === dimension ? "default" : "outline"}
               size="sm"
               onClick={() => onDimensionChange(option)}
+              // Same token the trend chart plots with, so the selected
+              // dimension and the line above it always read as one colour.
+              className={cn(
+                option === dimension && "bg-chart-1 text-white hover:bg-chart-1/90",
+              )}
             >
               {option === null ? "All" : (SHORT_LABELS[option] ?? option)}
             </Button>
@@ -189,7 +194,7 @@ function BreakdownTableRow({ row }: { row: BreakdownRow }) {
             <div
               className={cn(
                 "h-full rounded-full",
-                isUnknown ? "bg-muted-foreground/40" : "bg-primary",
+                isUnknown ? "bg-muted-foreground/40" : "bg-chart-1",
               )}
               style={{ width: `${Math.min(100, row.percentage)}%` }}
             />

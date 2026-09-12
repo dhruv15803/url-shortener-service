@@ -78,10 +78,16 @@ type CampaignView struct {
 }
 
 func newCampaignView(shortURL *models.ShortURL, destinationURL string) *CampaignView {
+	return newCampaignViewAt(shortURL, destinationURL, time.Now())
+}
+
+// newCampaignViewAt derives the status against a caller-supplied instant, so a
+// batch of views built together all agree on what "now" was.
+func newCampaignViewAt(shortURL *models.ShortURL, destinationURL string, now time.Time) *CampaignView {
 	return &CampaignView{
 		ShortURL:       shortURL,
 		DestinationURL: destinationURL,
-		Status:         shortURL.EffectiveStatus(time.Now()),
+		Status:         shortURL.EffectiveStatus(now),
 	}
 }
 
@@ -156,13 +162,21 @@ func (s *UrlService) CreateShortURLForDestination(ctx context.Context, userID in
 	return shortURL, nil
 }
 
-func (s *UrlService) ListCampaigns(userID int, limit int, offset int) ([]*CampaignView, int, error) {
-	rows, err := s.repository.ShortURLs.ListByUserID(userID, limit, offset)
+// ListCampaigns returns one filtered page plus the total matching that same
+// filter, so the caller can page through it.
+//
+// now is read once and used for the status filter, the count and every view,
+// so a campaign can't be selected as active by the query and then rendered as
+// expired a moment later.
+func (s *UrlService) ListCampaigns(userID int, filter repositories.CampaignFilter, limit int, offset int) ([]*CampaignView, int, error) {
+	now := time.Now()
+
+	rows, err := s.repository.ShortURLs.ListByUserID(userID, filter, now, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	total, err := s.repository.ShortURLs.CountByUserID(userID)
+	total, err := s.repository.ShortURLs.CountByUserID(userID, filter, now)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -170,7 +184,7 @@ func (s *UrlService) ListCampaigns(userID int, limit int, offset int) ([]*Campai
 	campaigns := make([]*CampaignView, 0, len(rows))
 	for _, row := range rows {
 		shortURL := row.ShortURL
-		campaigns = append(campaigns, newCampaignView(&shortURL, row.DestinationURL))
+		campaigns = append(campaigns, newCampaignViewAt(&shortURL, row.DestinationURL, now))
 	}
 
 	return campaigns, total, nil

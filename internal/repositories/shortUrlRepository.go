@@ -2,7 +2,9 @@ package repositories
 
 import (
 	"encoding/base64"
+	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dhruv15803/url-shortener-service/internal/models"
@@ -37,34 +39,99 @@ func (s *ShortURLRepository) GetByShortCode(shortCode string) (*models.ShortURL,
 	return &shortURL, nil
 }
 
-func (s *ShortURLRepository) ListByUserID(userID int, limit int, offset int) ([]*ShortURLWithDestination, error) {
-	query := `
+// CampaignFilter narrows a campaign list to what the user asked for. The zero
+// value filters nothing.
+type CampaignFilter struct {
+	// Search is a case-insensitive substring matched against the campaign
+	// name, the short code and the destination url. "" means no filter.
+	Search string
+
+	// Status is an *effective* status, so it may be scheduled or expired even
+	// though neither is ever stored. "" means no filter.
+	Status models.ShortURLStatus
+}
+
+// effectiveStatusExpr is the sql twin of models.ShortURL.EffectiveStatus.
+// Scheduled and expired are not stored - only the columns they are derived
+// from are - so filtering on them means recomputing the label here. The two
+// implementations must be changed together or the list will disagree with the
+// status badge each row renders.
+//
+// now is passed in rather than using sql now() so that both sides of that pair
+// judge a campaign against the same instant.
+const effectiveStatusExpr = `
+		CASE
+			WHEN s.status = 'disabled' THEN 'disabled'
+			WHEN s.starts_at IS NOT NULL AND s.starts_at > %[1]s THEN 'scheduled'
+			WHEN s.expires_at IS NOT NULL AND s.expires_at < %[1]s THEN 'expired'
+			ELSE 'active'
+		END`
+
+// likeEscape neutralises the wildcards in a user's search term so that
+// searching for "50%" means the literal characters and not "match everything".
+var likeEscape = strings.NewReplacer(`\`, `\`, `%`, `\%`, `_`, `\_`)
+
+// campaignConditions builds the WHERE body shared by ListByUserID and
+// CountByUserID. Both must apply identical filters or the reported total would
+// not match the rows on the page.
+func campaignConditions(userID int, filter CampaignFilter, now time.Time) (string, []any) {
+	conditions := []string{"d.user_id = $1"}
+	args := []any{userID}
+
+	if filter.Search != "" {
+		args = append(args, "%"+likeEscape.Replace(filter.Search)+"%")
+		// name is nullable, and NULL ILIKE is NULL, so an untitled campaign
+		// simply fails that arm instead of matching everything.
+		conditions = append(conditions, fmt.Sprintf(
+			`(s.name ILIKE $%[1]d ESCAPE '\' OR s.short_code ILIKE $%[1]d ESCAPE '\' OR d.destination_url ILIKE $%[1]d ESCAPE '\')`,
+			len(args),
+		))
+	}
+
+	if filter.Status != "" {
+		args = append(args, now)
+		nowArg := fmt.Sprintf("$%d", len(args))
+
+		args = append(args, string(filter.Status))
+		conditions = append(conditions, fmt.Sprintf(effectiveStatusExpr, nowArg)+fmt.Sprintf(" = $%d", len(args)))
+	}
+
+	return strings.Join(conditions, " AND "), args
+}
+
+func (s *ShortURLRepository) ListByUserID(userID int, filter CampaignFilter, now time.Time, limit int, offset int) ([]*ShortURLWithDestination, error) {
+	where, args := campaignConditions(userID, filter, now)
+	args = append(args, limit, offset)
+
+	query := fmt.Sprintf(`
 		SELECT s.*, d.destination_url
 		FROM short_urls s
 		JOIN destination_urls d ON d.id = s.destination_id
-		WHERE d.user_id = $1
+		WHERE %s
 		ORDER BY s.created_at DESC, s.id DESC
-		LIMIT $2 OFFSET $3
-	`
+		LIMIT $%d OFFSET $%d
+	`, where, len(args)-1, len(args))
 
 	shortURLs := []*ShortURLWithDestination{}
-	if err := s.db.Select(&shortURLs, query, userID, limit, offset); err != nil {
+	if err := s.db.Select(&shortURLs, query, args...); err != nil {
 		return nil, err
 	}
 
 	return shortURLs, nil
 }
 
-func (s *ShortURLRepository) CountByUserID(userID int) (int, error) {
-	query := `
+func (s *ShortURLRepository) CountByUserID(userID int, filter CampaignFilter, now time.Time) (int, error) {
+	where, args := campaignConditions(userID, filter, now)
+
+	query := fmt.Sprintf(`
 		SELECT count(*)
 		FROM short_urls s
 		JOIN destination_urls d ON d.id = s.destination_id
-		WHERE d.user_id = $1
-	`
+		WHERE %s
+	`, where)
 
 	var total int
-	if err := s.db.Get(&total, query, userID); err != nil {
+	if err := s.db.Get(&total, query, args...); err != nil {
 		return 0, err
 	}
 
